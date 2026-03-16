@@ -19,36 +19,20 @@
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useRef, useCallback } = React;
+const { useState, useRef, useCallback, useEffect } = React;
 
-const C = {
-  bg:      "#0c111a",
-  surface: "#111827",
-  navy:    "#0f1623",
-  border:  "#ffffff0a",
-  yellow:  "#f5c500",
-  muted:   "#3d4a5c",
-  text:    "#cbd5e1",
-};
-
-const LINE_COLORS = {
-  action:  "#c084fc",
-  item:    "#6ecfa8",
-  phone:   "#7dd3fc",
-  system:  "#f87171",
-  ooc:     "#94a3b8",
-  default: "#ffffff",
-};
+const C = { bg:"#0c111a", navy:"#0f1623", border:"#ffffff0a", yellow:"#f5c500", muted:"#3d4a5c", text:"#cbd5e1" };
+const LC = { action:"#c084fc", item:"#6ecfa8", phone:"#7dd3fc", system:"#f87171", ooc:"#94a3b8", default:"#ffffff" };
 
 function parseLine(line) {
   const t = line.trimStart();
-  if (!t) return { type: "empty", content: line };
-  if (t[0] === "*") return { type: "action",  color: LINE_COLORS.action,  content: line, bold: true };
-  if (t[0] === "$") return { type: "item",    color: LINE_COLORS.item,    content: line };
-  if (t[0] === "#") return { type: "phone",   color: LINE_COLORS.phone,   content: line };
-  if (t[0] === "!") return { type: "system",  color: LINE_COLORS.system,  content: line, bold: true };
-  if (t.startsWith("((")) return { type: "ooc", color: LINE_COLORS.ooc,   content: line, italic: true };
-  return { type: "default", color: LINE_COLORS.default, content: line };
+  if (!t) return { type:"empty", content:line };
+  if (t[0]==="*") return { type:"action",  color:LC.action,  content:line, bold:true };
+  if (t[0]==="$") return { type:"item",    color:LC.item,    content:line };
+  if (t[0]==="#") return { type:"phone",   color:LC.phone,   content:line };
+  if (t[0]==="!") return { type:"system",  color:LC.system,  content:line, bold:true };
+  if (t.startsWith("((")) return { type:"ooc", color:LC.ooc, content:line, italic:true };
+  return { type:"default", color:LC.default, content:line };
 }
 
 const DEFAULT_TEXT = `* Marcus Webb encosta o carro devagar no beco escuro, apagando os faróis antes de parar.
@@ -59,94 +43,159 @@ Danny Reeves diz (normal): Tá bom... mas se der errado, eu nunca estive aqui.
 * Danny Reeves puxa o zíper do casaco até o queixo e some na escuridão do beco.`;
 
 const POSITIONS = [
-  { id: "bottom-left",  label: "↙", title: "Inferior Esquerdo" },
-  { id: "bottom-right", label: "↘", title: "Inferior Direito"  },
-  { id: "top-left",     label: "↖", title: "Superior Esquerdo" },
-  { id: "top-right",    label: "↗", title: "Superior Direito"  },
-  { id: "center-left",  label: "←", title: "Centro Esquerdo"   },
+  { id:"bottom-left",  label:"↙", title:"Inferior Esquerdo" },
+  { id:"bottom-right", label:"↘", title:"Inferior Direito"  },
+  { id:"top-left",     label:"↖", title:"Superior Esquerdo" },
+  { id:"top-right",    label:"↗", title:"Superior Direito"  },
+  { id:"center-left",  label:"←", title:"Centro Esquerdo"   },
 ];
-
-const posStyle = (id) => {
-  const map = {
-    "bottom-left":  { bottom: 24, left: 24 },
-    "bottom-right": { bottom: 24, right: 24 },
-    "top-left":     { top: 24,    left: 24 },
-    "top-right":    { top: 24,    right: 24 },
-    "center-left":  { top: "50%", left: 24, transform: "translateY(-50%)" },
-  };
-  return map[id] || map["bottom-left"];
-};
 
 const LEGEND = [
-  { prefix: "*",  label: "/me e /do — ações",      color: LINE_COLORS.action  },
-  { prefix: "$",  label: "itens entregues",         color: LINE_COLORS.item    },
-  { prefix: "#",  label: "ligações celulares",      color: LINE_COLORS.phone   },
-  { prefix: "!",  label: "mensagens do sistema",    color: LINE_COLORS.system  },
-  { prefix: "((", label: "OOC",                     color: LINE_COLORS.ooc     },
-  { prefix: "—",  label: "fala normal",             color: LINE_COLORS.default },
+  { prefix:"*",  label:"/me e /do — ações",   color:LC.action  },
+  { prefix:"$",  label:"itens entregues",      color:LC.item    },
+  { prefix:"#",  label:"ligações celulares",   color:LC.phone   },
+  { prefix:"!",  label:"mensagens do sistema", color:LC.system  },
+  { prefix:"((", label:"OOC",                  color:LC.ooc     },
+  { prefix:"—",  label:"fala normal",          color:LC.default },
 ];
 
+// ── Core render function — used for BOTH preview and export ──────────────────
+// W, H = canvas dimensions
+// fontPx = font size in pixels (already scaled to canvas size)
+function renderToCanvas(ctx, W, H, {
+  bgImg, overlay, lines, position, maxWpct, fontPx
+}) {
+  // 1. Background
+  if (bgImg) {
+    ctx.drawImage(bgImg, 0, 0, W, H);
+    if (overlay > 0) {
+      ctx.fillStyle = `rgba(12,17,26,${overlay/100})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+  } else {
+    ctx.fillStyle = "#0f1623";
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // 2. Layout constants (% of canvas)
+  const PAD_X = Math.round(W * 0.025);
+  const PAD_Y = Math.round(H * 0.04);
+  const maxTextW = W * (maxWpct / 100) - PAD_X;
+  const lineH = fontPx * 1.55;
+
+  // 3. Word-wrap helper
+  const wrapLine = (line) => {
+    const font = `${line.bold?"bold ":""}${line.italic?"italic ":""}${fontPx}px Arial`;
+    ctx.font = font;
+    const words = line.content.split(" ");
+    const rows = [];
+    let cur = "";
+    for (const w of words) {
+      const test = cur ? cur+" "+w : w;
+      if (ctx.measureText(test).width > maxTextW && cur) { rows.push(cur); cur = w; }
+      else cur = test;
+    }
+    if (cur) rows.push(cur);
+    return rows.map(r => ({ text:r, line }));
+  };
+
+  const allRows = [];
+  lines.forEach(line => {
+    if (line.type === "empty") { allRows.push({ empty:true }); return; }
+    wrapLine(line).forEach(r => allRows.push(r));
+  });
+
+  const blockH = allRows.reduce((a, r) => a + (r.empty ? lineH*0.4 : lineH), 0);
+
+  // 4. Starting X / Y based on position
+  const isRight  = position.includes("right");
+  const isBottom = position.includes("bottom");
+  const isCenter = position.includes("center");
+
+  const startX = isRight ? W - maxTextW - PAD_X : PAD_X;
+  let startY;
+  if (isBottom)       startY = H - blockH - PAD_Y;
+  else if (isCenter)  startY = (H - blockH) / 2;
+  else                startY = PAD_Y;
+
+  // 5. Draw each row
+  let y = startY + fontPx;
+  const strokeW = Math.max(2, fontPx * 0.25);
+  allRows.forEach(row => {
+    if (row.empty) { y += lineH * 0.4; return; }
+    const font = `${row.line.bold?"bold ":""}${row.line.italic?"italic ":""}${fontPx}px Arial`;
+    ctx.font = font;
+    ctx.lineJoin = "round";
+    ctx.lineWidth = strokeW;
+    ctx.strokeStyle = "rgba(0,0,0,1)";
+    ctx.strokeText(row.text, startX, y);
+    ctx.fillStyle = row.line.color;
+    ctx.fillText(row.text, startX, y);
+    y += lineH;
+  });
+}
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
 function Block({ label, children }) {
   return (
     <div>
-      <div style={{ fontSize: 9, letterSpacing: 3, color: "#3d4a5c", marginBottom: 7, display: "flex", alignItems: "center", gap: 7 }}>
-        <span style={{ color: "#f5c500", fontSize: 7 }}>▌</span>{label}
+      <div style={{ fontSize:9, letterSpacing:3, color:"#3d4a5c", marginBottom:7, display:"flex", alignItems:"center", gap:7 }}>
+        <span style={{ color:"#f5c500", fontSize:7 }}>▌</span>{label}
       </div>
-      <div style={{ background: "#111827", border: "1px solid #ffffff08", borderRadius: 8, padding: "12px 13px" }}>
+      <div style={{ background:"#111827", border:"1px solid #ffffff08", borderRadius:8, padding:"12px 13px" }}>
         {children}
       </div>
     </div>
   );
 }
-
 function Row({ label, value, children }) {
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-        <span style={{ fontSize: 9, letterSpacing: 2, color: "#3d4a5c" }}>{label}</span>
-        <span style={{ fontSize: 9, color: "#f5c500", fontWeight: 700 }}>{value}</span>
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:2 }}>
+        <span style={{ fontSize:9, letterSpacing:2, color:"#3d4a5c" }}>{label}</span>
+        <span style={{ fontSize:9, color:"#f5c500", fontWeight:700 }}>{value}</span>
       </div>
       {children}
     </div>
   );
 }
+const smallBtn = { background:"#0a0f17", border:"1px solid #ffffff12", color:"#6b7a8d", borderRadius:5, width:26, height:26, cursor:"pointer", fontSize:14, fontWeight:700, display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0, fontFamily:"sans-serif" };
+const outBtn = { borderRadius:6, padding:"8px 10px", fontSize:10, letterSpacing:1.5, cursor:"pointer", fontWeight:700, background:"transparent", border:"1px solid", transition:"all .15s", fontFamily:"sans-serif" };
 
-const smallBtn = {
-  background: "#0a0f17", border: "1px solid #ffffff12",
-  color: "#6b7a8d", borderRadius: 5, width: 26, height: 26,
-  cursor: "pointer", fontSize: 14, fontWeight: 700,
-  display: "inline-flex", alignItems: "center", justifyContent: "center",
-  flexShrink: 0, fontFamily: "sans-serif",
-};
-
-const outBtn = {
-  borderRadius: 6, padding: "8px 10px",
-  fontSize: 10, letterSpacing: 1.5,
-  cursor: "pointer", fontWeight: 700,
-  background: "transparent",
-  border: "1px solid",
-  transition: "all .15s",
-  fontFamily: "sans-serif",
-};
-
+// ── App ────────────────────────────────────────────────────────────────────────
 function App() {
-  const [input, setInput]       = useState(DEFAULT_TEXT);
-  const [bgImage, setBgImage]   = useState(null);
-  const [dragging, setDragging] = useState(false);
-  const [copied, setCopied]     = useState(false);
-  const [exporting, setExporting] = useState(false);
-  const [overlay, setOverlay]   = useState(0);
-  const [fontSize, setFontSize] = useState(15);
-  const [position, setPosition] = useState("bottom-left");
-  const [maxW, setMaxW]         = useState(65);
-  const fileRef = useRef(null);
+  const [input, setInput]           = useState(DEFAULT_TEXT);
+  const [bgImage, setBgImage]       = useState(null);   // data URL
+  const [bgImgEl, setBgImgEl]       = useState(null);   // HTMLImageElement
+  const [imgSize, setImgSize]       = useState({ w:1280, h:720 });
+  const [dragging, setDragging]     = useState(false);
+  const [copied, setCopied]         = useState(false);
+  const [exporting, setExporting]   = useState(false);
+  const [overlay, setOverlay]       = useState(0);
+  const [fontSize, setFontSize]     = useState(15);
+  const [position, setPosition]     = useState("bottom-left");
+  const [maxW, setMaxW]             = useState(65);
+
+  const fileRef    = useRef(null);
+  const previewRef = useRef(null);  // canvas element for preview
+  const wrapRef    = useRef(null);  // div wrapping the canvas (for measuring width)
 
   const lines = input.split("\n").map(parseLine);
 
+  // Load image
   const handleFile = (file) => {
     if (!file?.type.startsWith("image/")) return;
     const r = new FileReader();
-    r.onload = (e) => setBgImage(e.target.result);
+    r.onload = (e) => {
+      const src = e.target.result;
+      const img = new Image();
+      img.onload = () => {
+        setImgSize({ w: img.naturalWidth, h: img.naturalHeight });
+        setBgImage(src);
+        setBgImgEl(img);
+      };
+      img.src = src;
+    };
     r.readAsDataURL(file);
   };
 
@@ -155,111 +204,87 @@ function App() {
     handleFile(e.dataTransfer.files[0]);
   }, []);
 
+  // ── Draw preview canvas ───────────────────────────────────────────────────
+  const drawPreview = useCallback(() => {
+    const canvas = previewRef.current;
+    const wrap   = wrapRef.current;
+    if (!canvas || !wrap) return;
+
+    // Use the WRAPPER width (which never changes due to canvas) for sizing
+    const PW = wrap.offsetWidth;
+    const PH = Math.round(PW * (imgSize.h / imgSize.w));
+
+    // Set canvas internal resolution without changing its CSS size
+    // CSS size is controlled by the aspect-ratio container, not the canvas
+    canvas.width  = PW;
+    canvas.height = PH;
+
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, PW, PH);
+
+    const scaledFont = Math.round(fontSize * (PW / 1280));
+    renderToCanvas(ctx, PW, PH, { bgImg:bgImgEl, overlay, lines, position, maxWpct:maxW, fontPx:scaledFont });
+  }, [input, bgImgEl, overlay, fontSize, position, maxW, imgSize]);
+
+  useEffect(() => { drawPreview(); }, [drawPreview]);
+
+  // Redraw on window resize using ResizeObserver so we don't cause layout loops
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const ro = new ResizeObserver(() => drawPreview());
+    ro.observe(wrap);
+    return () => ro.disconnect();
+  }, [drawPreview]);
+
+  // ── Export ────────────────────────────────────────────────────────────────
   const exportImage = () => {
     setExporting(true);
-    const W = 1020, scale = 2;
-    const fSize = fontSize + 1;
-    const lH = fSize * 1.55;
-    const padX = 28, padY = 20;
-    const maxTextW = W * (maxW / 100) - padX * 2;
-    const tmpCtx = document.createElement("canvas").getContext("2d");
+    const EW = imgSize.w;
+    const EH = imgSize.h;
+    const canvas = document.createElement("canvas");
+    canvas.width  = EW;
+    canvas.height = EH;
+    const ctx = canvas.getContext("2d");
 
-    const wrapText = (ctx, text, maxW, font) => {
-      ctx.font = font;
-      const words = text.split(" ");
-      const rows = [];
-      let cur = "";
-      for (const w of words) {
-        const test = cur ? cur + " " + w : w;
-        if (ctx.measureText(test).width > maxW && cur) { rows.push(cur); cur = w; }
-        else cur = test;
-      }
-      if (cur) rows.push(cur);
-      return rows;
-    };
-
-    const allRows = [];
-    lines.forEach(line => {
-      if (line.type === "empty") { allRows.push({ empty: true }); return; }
-      const font = `${line.bold ? "bold " : ""}${line.italic ? "italic " : ""}${fSize}px Arial`;
-      wrapText(tmpCtx, line.content, maxTextW, font).forEach(r => allRows.push({ text: r, line }));
+    renderToCanvas(ctx, EW, EH, {
+      bgImg:   bgImgEl,
+      overlay,
+      lines,
+      position,
+      maxWpct: maxW,
+      fontPx:  fontSize * (EW / 1280),
     });
 
-    const blockH = allRows.reduce((acc, r) => acc + (r.empty ? lH * 0.4 : lH), 0) + padY * 2;
-    const H = 620;
-    const canvas = document.createElement("canvas");
-    canvas.width = W * scale; canvas.height = H * scale;
-    const ctx = canvas.getContext("2d");
-    ctx.scale(scale, scale);
-
-    const draw = () => {
-      const pos = posStyle(position);
-      const isRight  = position.includes("right");
-      const isBottom = position.includes("bottom");
-      const isCenter = position.includes("center");
-      const startX = isRight ? W - maxTextW - padX - (pos.right || 0) : (pos.left || 24);
-      let startY;
-      if (isBottom) startY = H - blockH - (pos.bottom || 24);
-      else if (isCenter) startY = (H - blockH) / 2;
-      else startY = pos.top || 24;
-
-      let y = startY + padY;
-      allRows.forEach(row => {
-        if (row.empty) { y += lH * 0.4; return; }
-        ctx.font = `${row.line.bold ? "bold " : ""}${row.line.italic ? "italic " : ""}${fSize}px Arial`;
-        ctx.strokeStyle = "rgba(0,0,0,1)";
-        ctx.lineWidth = 4;
-        ctx.lineJoin = "round";
-        ctx.strokeText(row.text, startX, y);
-        ctx.fillStyle = row.line.color;
-        ctx.fillText(row.text, startX, y);
-        y += lH;
-      });
-    };
-
-    const finish = () => {
-      canvas.toBlob(blob => {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url; a.download = "chatlog_chicago.png"; a.click();
-        URL.revokeObjectURL(url);
-        setExporting(false);
-      }, "image/png");
-    };
-
-    if (bgImage) {
-      const img = new Image();
-      img.onload = () => {
-        const s = Math.max(W / img.width, H / img.height);
-        ctx.drawImage(img, (W - img.width*s)/2, (H - img.height*s)/2, img.width*s, img.height*s);
-        if (overlay > 0) { ctx.fillStyle = `rgba(12,17,26,${overlay/100})`; ctx.fillRect(0,0,W,H); }
-        draw(); finish();
-      };
-      img.src = bgImage;
-    } else {
-      ctx.fillStyle = C.navy; ctx.fillRect(0,0,W,H);
-      draw(); finish();
-    }
+    canvas.toBlob(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = "chatlog_chicago.png"; a.click();
+      URL.revokeObjectURL(url);
+      setExporting(false);
+    }, "image/png");
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, display: "flex", flexDirection: "column", alignItems: "center", fontFamily: "sans-serif" }}>
+    <div style={{ minHeight:"100vh", background:C.bg, color:C.text, display:"flex", flexDirection:"column", alignItems:"center", fontFamily:"sans-serif" }}>
 
-      <header style={{ width: "100%", background: C.navy, borderBottom: `2px solid ${C.yellow}`, padding: "0 32px", boxSizing: "border-box", display: "flex", alignItems: "center", gap: 14, height: 58 }}>
-        <div style={{ background: C.yellow, borderRadius: 7, width: 38, height: 38, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 14, color: C.navy, fontFamily: "'Arial Black', sans-serif", boxShadow: `0 0 14px ${C.yellow}44` }}>CT</div>
+      {/* HEADER */}
+      <header style={{ width:"100%", background:C.navy, borderBottom:`2px solid ${C.yellow}`, padding:"0 32px", boxSizing:"border-box", display:"flex", alignItems:"center", gap:14, height:58 }}>
+        <div style={{ background:C.yellow, borderRadius:7, width:38, height:38, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", fontWeight:900, fontSize:14, color:C.navy, fontFamily:"'Arial Black', sans-serif", boxShadow:`0 0 14px ${C.yellow}44` }}>CT</div>
         <div>
-          <div style={{ fontFamily: "'Arial Black', sans-serif", fontSize: 16, fontWeight: 900, letterSpacing: 3, color: C.yellow, lineHeight: 1.1 }}>
-            CHICAGO <span style={{ color: "#ffffff55", fontWeight: 400, fontSize: 11, letterSpacing: 2, fontFamily: "sans-serif" }}>Tools RP</span>
+          <div style={{ fontFamily:"'Arial Black', sans-serif", fontSize:16, fontWeight:900, letterSpacing:3, color:C.yellow, lineHeight:1.1 }}>
+            CHICAGO <span style={{ color:"#ffffff55", fontWeight:400, fontSize:11, letterSpacing:2, fontFamily:"sans-serif" }}>Tools RP</span>
           </div>
-          <div style={{ fontSize: 8, color: C.muted, letterSpacing: 4 }}>CHAT LOG CREATOR</div>
+          <div style={{ fontSize:8, color:C.muted, letterSpacing:4 }}>CHAT LOG CREATOR</div>
         </div>
-        <div style={{ flex: 1, height: 1, background: `linear-gradient(90deg, ${C.yellow}40, transparent)`, marginLeft: 10 }} />
+        <div style={{ flex:1, height:1, background:`linear-gradient(90deg, ${C.yellow}40, transparent)`, marginLeft:10 }} />
       </header>
 
-      <main style={{ width: "100%", maxWidth: 1060, padding: "24px 20px", boxSizing: "border-box" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 20 }}>
+      <main style={{ width:"100%", maxWidth:1060, padding:"24px 20px", boxSizing:"border-box" }}>
+        <div style={{ display:"grid", gridTemplateColumns:"300px 1fr", gap:20 }}>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {/* LEFT PANEL */}
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
 
             <Block label="FOTO DE FUNDO">
               <div
@@ -267,117 +292,107 @@ function App() {
                 onDragLeave={() => setDragging(false)}
                 onDrop={handleDrop}
                 onClick={() => fileRef.current && fileRef.current.click()}
-                style={{ border: `1.5px dashed ${dragging ? C.yellow : bgImage ? C.yellow+"44" : "#ffffff15"}`, borderRadius: 7, cursor: "pointer", background: dragging ? C.yellow+"0a" : "#00000020", transition: "all .18s", overflow: "hidden", minHeight: bgImage ? 0 : 58, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={e => handleFile(e.target.files[0])} />
+                style={{ border:`1.5px dashed ${dragging?C.yellow:bgImage?C.yellow+"44":"#ffffff15"}`, borderRadius:7, cursor:"pointer", background:dragging?C.yellow+"0a":"#00000020", transition:"all .18s", overflow:"hidden", minHeight:bgImage?0:58, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <input ref={fileRef} type="file" accept="image/*" style={{ display:"none" }} onChange={e => handleFile(e.target.files[0])} />
                 {bgImage ? (
-                  <div style={{ position: "relative", width: "100%" }}>
-                    <img src={bgImage} alt="" style={{ width: "100%", maxHeight: 110, objectFit: "cover", display: "block" }} />
-                    <div style={{ position: "absolute", inset: 0, background: "#000a", display: "flex", alignItems: "center", justifyContent: "center", opacity: 0, transition: ".15s" }}
-                      onMouseEnter={e => e.currentTarget.style.opacity = 1}
-                      onMouseLeave={e => e.currentTarget.style.opacity = 0}>
-                      <span style={{ color: C.yellow, fontSize: 10, letterSpacing: 1 }}>TROCAR FOTO</span>
+                  <div style={{ position:"relative", width:"100%" }}>
+                    <img src={bgImage} alt="" style={{ width:"100%", maxHeight:110, objectFit:"cover", display:"block" }} />
+                    <div style={{ position:"absolute", inset:0, background:"#000a", display:"flex", alignItems:"center", justifyContent:"center", opacity:0, transition:".15s" }}
+                      onMouseEnter={e => e.currentTarget.style.opacity=1}
+                      onMouseLeave={e => e.currentTarget.style.opacity=0}>
+                      <span style={{ color:C.yellow, fontSize:10, letterSpacing:1 }}>TROCAR FOTO</span>
                     </div>
                   </div>
                 ) : (
-                  <span style={{ color: C.muted, fontSize: 11 }}>🖼 Arraste ou clique para adicionar</span>
+                  <span style={{ color:C.muted, fontSize:11 }}>🖼 Arraste ou clique para adicionar</span>
                 )}
               </div>
               {bgImage && (
-                <div style={{ marginTop: 10 }}>
+                <div style={{ marginTop:10 }}>
                   <Row label="ESCURECIMENTO" value={`${overlay}%`}>
-                    <input type="range" min={0} max={85} value={overlay} onChange={e => setOverlay(+e.target.value)} style={{ width: "100%", accentColor: C.yellow, marginTop: 4 }} />
+                    <input type="range" min={0} max={85} value={overlay} onChange={e=>setOverlay(+e.target.value)} style={{ width:"100%", accentColor:C.yellow, marginTop:4 }} />
                   </Row>
                 </div>
               )}
             </Block>
 
             <Block label="TEXTO DO CHAT LOG">
-              <textarea value={input} onChange={e => setInput(e.target.value)}
+              <textarea value={input} onChange={e=>setInput(e.target.value)}
                 placeholder={"* Ação\n$ Item\n# Celular\n! Sistema\nFala normal"}
-                style={{ width: "100%", height: 190, background: "#0a0f17", border: "1px solid #ffffff0c", borderRadius: 6, color: "#c8d0dc", fontFamily: "'Courier New', monospace", fontSize: 12.5, lineHeight: 1.7, padding: "10px 12px", resize: "vertical", outline: "none", boxSizing: "border-box" }} />
+                style={{ width:"100%", height:190, background:"#0a0f17", border:"1px solid #ffffff0c", borderRadius:6, color:"#c8d0dc", fontFamily:"'Courier New', monospace", fontSize:12.5, lineHeight:1.7, padding:"10px 12px", resize:"vertical", outline:"none", boxSizing:"border-box" }} />
             </Block>
 
             <Block label="AJUSTES">
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
                 <Row label="TAMANHO DA FONTE" value={`${fontSize}px`}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
-                    <button onClick={() => setFontSize(s => Math.max(10, s-1))} style={smallBtn}>−</button>
-                    <input type="range" min={10} max={24} value={fontSize} onChange={e => setFontSize(+e.target.value)} style={{ flex: 1, accentColor: C.yellow }} />
-                    <button onClick={() => setFontSize(s => Math.min(24, s+1))} style={smallBtn}>+</button>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:4 }}>
+                    <button onClick={()=>setFontSize(s=>Math.max(8,s-1))} style={smallBtn}>−</button>
+                    <input type="range" min={8} max={32} value={fontSize} onChange={e=>setFontSize(+e.target.value)} style={{ flex:1, accentColor:C.yellow }} />
+                    <button onClick={()=>setFontSize(s=>Math.min(32,s+1))} style={smallBtn}>+</button>
                   </div>
                 </Row>
                 <Row label="LARGURA DO TEXTO" value={`${maxW}%`}>
-                  <input type="range" min={30} max={95} value={maxW} onChange={e => setMaxW(+e.target.value)} style={{ width: "100%", accentColor: C.yellow, marginTop: 4 }} />
+                  <input type="range" min={20} max={95} value={maxW} onChange={e=>setMaxW(+e.target.value)} style={{ width:"100%", accentColor:C.yellow, marginTop:4 }} />
                 </Row>
                 <div>
-                  <span style={{ fontSize: 9, letterSpacing: 2, color: C.muted }}>POSIÇÃO</span>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 6 }}>
+                  <span style={{ fontSize:9, letterSpacing:2, color:C.muted }}>POSIÇÃO</span>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:5, marginTop:6 }}>
                     {POSITIONS.map(p => (
-                      <button key={p.id} title={p.title} onClick={() => setPosition(p.id)}
-                        style={{ background: position === p.id ? C.yellow : "#0a0f17", color: position === p.id ? C.navy : C.muted, border: `1px solid ${position === p.id ? C.yellow : "#ffffff12"}`, borderRadius: 5, padding: "5px 10px", cursor: "pointer", fontSize: 14, fontWeight: 700, transition: "all .15s", fontFamily: "sans-serif" }}>{p.label}</button>
+                      <button key={p.id} title={p.title} onClick={()=>setPosition(p.id)}
+                        style={{ background:position===p.id?C.yellow:"#0a0f17", color:position===p.id?C.navy:C.muted, border:`1px solid ${position===p.id?C.yellow:"#ffffff12"}`, borderRadius:5, padding:"5px 10px", cursor:"pointer", fontSize:14, fontWeight:700, transition:"all .15s", fontFamily:"sans-serif" }}>{p.label}</button>
                     ))}
                   </div>
                 </div>
               </div>
             </Block>
 
-            <div style={{ display: "flex", gap: 7 }}>
-              <button onClick={() => { navigator.clipboard.writeText(input); setCopied(true); setTimeout(() => setCopied(false), 1600); }}
-                style={{ flex: 1, ...outBtn, color: copied ? "#6ecfa8" : C.muted, borderColor: copied ? "#6ecfa840" : "#ffffff12" }}>
-                {copied ? "✓" : "COPIAR"}
+            <div style={{ display:"flex", gap:7 }}>
+              <button onClick={()=>{ navigator.clipboard.writeText(input); setCopied(true); setTimeout(()=>setCopied(false),1600); }}
+                style={{ flex:1, ...outBtn, color:copied?"#6ecfa8":C.muted, borderColor:copied?"#6ecfa840":"#ffffff12" }}>
+                {copied?"✓":"COPIAR"}
               </button>
-              <button onClick={() => { setInput(""); setBgImage(null); }} style={{ flex: 1, ...outBtn, color: "#f87171", borderColor: "#f8717130" }}>LIMPAR</button>
+              <button onClick={()=>{ setInput(""); setBgImage(null); setBgImgEl(null); setImgSize({w:1280,h:720}); }}
+                style={{ flex:1, ...outBtn, color:"#f87171", borderColor:"#f8717130" }}>LIMPAR</button>
               <button onClick={exportImage} disabled={exporting}
-                style={{ flex: 2.2, borderRadius: 6, padding: "8px 10px", fontSize: 10, letterSpacing: 1.5, cursor: exporting ? "wait" : "pointer", fontWeight: 900, border: "none", transition: "all .18s", background: exporting ? "#3a3010" : C.yellow, color: exporting ? C.yellow : C.navy, fontFamily: "'Arial Black', sans-serif", boxShadow: exporting ? "none" : `0 3px 16px ${C.yellow}40` }}>
-                {exporting ? "..." : "↓ EXPORTAR PNG"}
+                style={{ flex:2.2, borderRadius:6, padding:"8px 10px", fontSize:10, letterSpacing:1.5, cursor:exporting?"wait":"pointer", fontWeight:900, border:"none", transition:"all .18s", background:exporting?"#3a3010":C.yellow, color:exporting?C.yellow:C.navy, fontFamily:"'Arial Black', sans-serif", boxShadow:exporting?"none":`0 3px 16px ${C.yellow}40` }}>
+                {exporting?"...":"↓ EXPORTAR PNG"}
               </button>
             </div>
 
             <Block label="LEGENDA">
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
                 {LEGEND.map(({ prefix, label, color }) => (
-                  <div key={prefix} style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                    <span style={{ background: color+"15", border: `1px solid ${color}35`, color, borderRadius: 4, padding: "1px 7px", fontFamily: "monospace", fontSize: 11, minWidth: 22, textAlign: "center", fontWeight: 700 }}>{prefix}</span>
-                    <span style={{ color: C.muted, fontSize: 10 }}>{label}</span>
+                  <div key={prefix} style={{ display:"flex", alignItems:"center", gap:9 }}>
+                    <span style={{ background:color+"15", border:`1px solid ${color}35`, color, borderRadius:4, padding:"1px 7px", fontFamily:"monospace", fontSize:11, minWidth:22, textAlign:"center", fontWeight:700 }}>{prefix}</span>
+                    <span style={{ color:C.muted, fontSize:10 }}>{label}</span>
                   </div>
                 ))}
               </div>
             </Block>
           </div>
 
+          {/* RIGHT — PREVIEW CANVAS */}
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <span style={{ fontSize: 9, letterSpacing: 3, color: C.muted }}>PREVIEW</span>
-              <div style={{ flex: 1, height: 1, background: `linear-gradient(90deg, ${C.yellow}25, transparent)` }} />
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+              <span style={{ fontSize:9, letterSpacing:3, color:C.muted }}>PREVIEW</span>
+              <div style={{ flex:1, height:1, background:`linear-gradient(90deg, ${C.yellow}25, transparent)` }} />
+              {bgImage && <span style={{ fontSize:9, color:C.muted }}>{imgSize.w}×{imgSize.h}px</span>}
             </div>
-            <div style={{ borderRadius: 10, overflow: "hidden", border: `1px solid ${C.yellow}18`, position: "relative", height: 580, background: C.navy, boxShadow: "0 8px 40px #00000060" }}>
-              {bgImage && <>
-                <div style={{ position: "absolute", inset: 0, backgroundImage: `url(${bgImage})`, backgroundSize: "cover", backgroundPosition: "center", zIndex: 0 }} />
-                {overlay > 0 && <div style={{ position: "absolute", inset: 0, background: `rgba(12,17,26,${overlay/100})`, zIndex: 1 }} />}
-              </>}
-              <div style={{ position: "absolute", zIndex: 2, maxWidth: `${maxW}%`, ...posStyle(position), display: "flex", flexDirection: "column", gap: 0 }}>
-                {lines.map((line, i) =>
-                  line.type === "empty"
-                    ? <div key={i} style={{ height: fontSize * 0.4 }} />
-                    : (
-                      <div key={i} style={{ color: line.color, fontSize: fontSize, lineHeight: 1.55, fontStyle: line.italic ? "italic" : "normal", fontWeight: line.bold ? "bold" : "normal", fontFamily: "Arial, sans-serif", textShadow: "1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 0 2px 8px rgba(0,0,0,0.95)", wordBreak: "break-word", display: "block", marginBottom: 1 }}>
-                        {line.content}
-                      </div>
-                    )
-                )}
+
+            {/* Outer div measures width — never resized by canvas */}
+            <div ref={wrapRef} style={{ width:"100%", borderRadius:10, overflow:"hidden", border:`1px solid ${C.yellow}18`, boxShadow:"0 8px 40px #00000060", background:C.navy }}>
+              {/* Aspect-ratio box: height = width * (h/w) via paddingTop */}
+              <div style={{ position:"relative", width:"100%", paddingTop:`${(imgSize.h / imgSize.w) * 100}%` }}>
+                <canvas ref={previewRef} style={{ position:"absolute", top:0, left:0, width:"100%", height:"100%", display:"block" }} />
               </div>
-              {!input.trim() && (
-                <div style={{ position: "absolute", inset: 0, zIndex: 3, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <span style={{ color: "#1e2a3a", fontSize: 12 }}>Preview aparecerá aqui...</span>
-                </div>
-              )}
             </div>
-            {!bgImage && <div style={{ marginTop: 8, color: "#1e2a3a", fontSize: 10, textAlign: "center" }}>💡 Adicione uma foto de fundo para ver o resultado final</div>}
+
+            {!bgImage && <div style={{ marginTop:8, color:"#1e2a3a", fontSize:10, textAlign:"center" }}>💡 Adicione uma foto de fundo para ver o resultado final</div>}
           </div>
         </div>
       </main>
 
-      <footer style={{ padding: "16px", color: C.muted, fontSize: 8, letterSpacing: 3, textAlign: "center", borderTop: `1px solid ${C.border}`, width: "100%", boxSizing: "border-box", marginTop: 8 }}>
+      <footer style={{ padding:"16px", color:C.muted, fontSize:8, letterSpacing:3, textAlign:"center", borderTop:`1px solid ${C.border}`, width:"100%", boxSizing:"border-box", marginTop:8 }}>
         CHICAGO TOOLS RP · CHAT LOG CREATOR
       </footer>
     </div>
