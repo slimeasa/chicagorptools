@@ -8,9 +8,10 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dom-to-image/2.6.0/dom-to-image.min.js"></script>
   <style>
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-    body{background:#0c111a;font-family:sans-serif;color:#cbd5e1}
+    body{background:#0c111a;font-family:'Chalet London','ChaletLondon','Arial',sans-serif;color:#cbd5e1}
     input[type=range]{cursor:pointer;accent-color:#f5c500}
     textarea::-webkit-scrollbar{width:5px}
     textarea::-webkit-scrollbar-thumb{background:#1e2a3a;border-radius:3px}
@@ -22,35 +23,43 @@
     .img-thumb:hover .rm{opacity:1}
     .rm{position:absolute;top:3px;right:3px;background:#cf6e6e;color:#fff;border:none;border-radius:50%;width:17px;height:17px;font-size:9px;cursor:pointer;opacity:0;transition:.15s;display:flex;align-items:center;justify-content:center}
     .char-bubble{display:inline-flex;align-items:center;gap:5px;padding:4px 10px 4px 6px;border-radius:20px;cursor:pointer;border:1.5px solid transparent;transition:all .15s;font-size:11px;font-weight:700;user-select:none}
-    .char-bubble:hover{filter:brightness(1.15)}
-    .char-bubble.active{border-color:rgba(255,255,255,0.5)}
+    .char-bubble.active{border-color:rgba(255,255,255,0.4)}
     .action-btn{padding:5px 10px;border-radius:5px;border:1px solid #ffffff14;background:#0a0f17;color:#94a3b8;font-size:10px;font-weight:700;cursor:pointer;transition:all .15s;letter-spacing:1px}
     .action-btn:hover{background:#161f2e;color:#cbd5e1}
-    .action-btn.fala{border-color:#ffffff25;color:#ffffff}
-    .action-btn.me{border-color:#cc99ff44;color:#cc99ff}
-    .action-btn.do{border-color:#cc99ff22;color:#9966cc}
+    /* ── Chat line styles — exactly like GTA ── */
+    .chat-wrap{display:inline-block;padding:4px 6px;line-height:1.45;font-family:'Chalet London','ChaletLondon','Arial',sans-serif}
+    .chat-line{display:block;white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.4;font-family:'Chalet London','ChaletLondon','Arial',sans-serif}
+    .chat-line.has-bg {text-shadow:none}
+    .chat-line.no-bg  {text-shadow:-1px 0 #000, 1px 0 #000, 0 -1px #000, 0 1px #000, -1px -1px #000, 1px -1px #000, -1px 1px #000, 1px 1px #000}
+    .chat-line.speech {color:#ffffff;font-weight:normal}
+    .chat-line.action  {color:#cc99ff;font-weight:normal}
+    .chat-line.item    {color:#6ecfa8;font-weight:normal}
+    .chat-line.phone   {color:#f5c500;font-weight:normal}
+    .chat-line.system  {color:#f87171;font-weight:bold}
+    .chat-line.ooc     {color:#94a3b8;font-weight:normal}
+    .chat-line.empty   {display:block;height:4px}
   </style>
 </head>
 <body>
 <div id="root"></div>
+<!-- Hidden render area for dom-to-image -->
+<div id="render-stage" style="position:fixed;top:-9999px;left:-9999px;pointer-events:none;"></div>
+
 <script type="text/babel">
 const {useState,useRef,useCallback,useEffect} = React;
 
 const C={bg:"#0c111a",navy:"#0f1623",yellow:"#f5c500",muted:"#3d4a5c"};
-const LC={action:"#cc99ff",item:"#6ecfa8",phone:"#7dd3fc",system:"#f87171",ooc:"#94a3b8",default:"#ffffff"};
-
-// Char colors for bubbles
 const CHAR_COLORS=["#f5c500","#6ecfa8","#7dd3fc","#f87171","#cc99ff","#ffa94d","#a9e34b","#f783ac","#74c0fc","#63e6be"];
 
 function parseLine(line){
   const t=line.trimStart();
-  if(!t) return {type:"empty",content:line};
-  if(t[0]==="*") return {type:"action", color:LC.action,  content:line, italic:true,  bold:false};
-  if(t[0]==="$") return {type:"item",   color:LC.item,    content:line, italic:false, bold:false};
-  if(t[0]==="#") return {type:"phone",  color:LC.phone,   content:line, italic:false, bold:false};
-  if(t[0]==="!") return {type:"system", color:LC.system,  content:line, italic:false, bold:true};
-  if(t.startsWith("((")) return {type:"ooc",color:LC.ooc, content:line, italic:true,  bold:false};
-  return {type:"default",color:LC.default,content:line,italic:false,bold:true};
+  if(!t) return {type:"empty",content:""};
+  if(t[0]==="*") return {type:"action", content:line};
+  if(t[0]==="$") return {type:"item",   content:line};
+  if(t[0]==="#") return {type:"phone",  content:line};
+  if(t[0]==="!") return {type:"system", content:line};
+  if(t.startsWith("((")) return {type:"ooc", content:line};
+  return {type:"speech", content:line};
 }
 
 const DEFAULT_TEXT=`* Marcus Webb encosta o carro devagar no beco escuro, apagando os faróis antes de parar.
@@ -61,77 +70,33 @@ Danny Reeves diz (normal): Tá bom... mas se der errado, eu nunca estive aqui.
 * Danny Reeves puxa o zíper do casaco até o queixo e some na escuridão do beco.`;
 
 const LEGEND=[
-  {prefix:"*",  label:"/me (com nome) e /do (sem nome)", color:LC.action},
-  {prefix:"$",  label:"itens entregues",                 color:LC.item  },
-  {prefix:"#",  label:"ligações celulares",              color:LC.phone },
-  {prefix:"!",  label:"mensagens do sistema",            color:LC.system},
-  {prefix:"((", label:"OOC",                             color:LC.ooc   },
-  {prefix:"—",  label:"fala normal",                     color:LC.default},
+  {prefix:"*",  css:"action", label:"/me e /do"},
+  {prefix:"$",  css:"item",   label:"itens entregues"},
+  {prefix:"#",  css:"phone",  label:"ligações (amarelo)"},
+  {prefix:"!",  css:"system", label:"mensagens do sistema"},
+  {prefix:"((", css:"ooc",    label:"OOC"},
+  {prefix:"—",  css:"speech", label:"fala normal"},
 ];
 
-// ── Renderer ──────────────────────────────────────────────────────────────────
-function renderToCanvas(ctx,W,H,{bgImg,overlay,lines,textXpct,textYpct,maxWpct,fontPx,bgEnabled,bgColor,bgOpacity}){
-  if(bgImg){
-    ctx.drawImage(bgImg,0,0,W,H);
-    if(overlay>0){ctx.fillStyle=`rgba(12,17,26,${overlay/100})`;ctx.fillRect(0,0,W,H);}
-  } else {
-    ctx.fillStyle="#0f1623";ctx.fillRect(0,0,W,H);
-  }
+// ── Build the HTML chat block ──────────────────────────────────────────────────
+function buildChatHTML(lines, fontSize, bgEnabled, bgColor, bgOpacity, maxWpx){
+  const bg = bgEnabled
+    ? (() => {
+        const r=parseInt(bgColor.slice(1,3),16),g=parseInt(bgColor.slice(3,5),16),b=parseInt(bgColor.slice(5,7),16);
+        return `rgba(${r},${g},${b},${bgOpacity/100})`;
+      })()
+    : "transparent";
 
-  const maxTextW=W*(maxWpct/100);
-  const lineH=fontPx*1.45;
-  const PAD=fontPx*0.55;
+  const bgClass = bgEnabled ? "has-bg" : "no-bg";
+  const linesHTML = lines.map(l => {
+    if(l.type==="empty") return `<span class="chat-line empty"> </span>`;
+    const esc = l.content.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    return `<span class="chat-line ${l.type} ${bgClass}" style="font-size:${fontSize}px">${esc}</span>`;
+  }).join("");
 
-  const wrapLine=(line)=>{
-    const font=`${line.bold?"bold ":""}${line.italic?"italic ":""}${fontPx}px Arial,sans-serif`;
-    ctx.font=font;
-    const words=line.content.split(" ");
-    const rows=[];let cur="";
-    for(const w of words){
-      const test=cur?cur+" "+w:w;
-      if(ctx.measureText(test).width>maxTextW&&cur){rows.push(cur);cur=w;}
-      else cur=test;
-    }
-    if(cur) rows.push(cur);
-    return rows.map(r=>({text:r,line}));
-  };
-
-  const allRows=[];
-  lines.forEach(line=>{
-    if(line.type==="empty"){allRows.push({empty:true});return;}
-    wrapLine(line).forEach(r=>allRows.push(r));
-  });
-
-  const startX=W*textXpct;
-  const startY=H*textYpct;
-
-  if(bgEnabled){
-    const blockW=maxTextW+PAD*2;
-    const blockH=allRows.reduce((a,r)=>a+(r.empty?lineH*0.4:lineH),0)+PAD*2;
-    const hex=bgColor||"#000000";
-    const r2=parseInt(hex.slice(1,3),16),g2=parseInt(hex.slice(3,5),16),b2=parseInt(hex.slice(5,7),16);
-    ctx.fillStyle=`rgba(${r2},${g2},${b2},${(bgOpacity||50)/100})`;
-    ctx.beginPath();
-    ctx.roundRect(startX-PAD,startY-PAD,blockW,blockH,fontPx*0.25);
-    ctx.fill();
-  }
-
-  let y=startY+fontPx;
-  allRows.forEach(row=>{
-    if(row.empty){y+=lineH*0.4;return;}
-    const font=`${row.line.bold?"bold ":""}${row.line.italic?"italic ":""}${fontPx}px Arial,sans-serif`;
-    ctx.font=font;
-    ctx.fillStyle="rgba(0,0,0,0.85)";
-    for(const [dx,dy] of [[-1,0],[1,0],[0,-1],[0,1]]){
-      ctx.fillText(row.text,startX+dx,y+dy);
-    }
-    ctx.fillStyle=row.line.color;
-    ctx.fillText(row.text,startX,y);
-    y+=lineH;
-  });
+  return `<div class="chat-wrap" style="background:${bg};max-width:${maxWpx}px;border-radius:2px;font-family:'Chalet London','ChaletLondon','Arial',sans-serif">${linesHTML}</div>`;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 function Block({label,children}){
   return(
     <div>
@@ -157,12 +122,9 @@ function Slider({label,value,min,max,onChange,unit=""}){
 }
 const sBtn={borderRadius:5,width:26,height:26,cursor:"pointer",fontSize:13,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0,background:"#0a0f17",border:"1px solid #ffffff12",color:"#6b7a8d"};
 
-// ── App ───────────────────────────────────────────────────────────────────────
 function App(){
   const [tab,setTab]=useState("single");
   const [input,setInput]=useState(DEFAULT_TEXT);
-
-  // Characters
   const [chars,setChars]=useState([
     {id:1,name:"Marcus Webb",  color:CHAR_COLORS[0]},
     {id:2,name:"Danny Reeves", color:CHAR_COLORS[1]},
@@ -170,22 +132,22 @@ function App(){
   const [activeChar,setActiveChar]=useState(1);
   const [newName,setNewName]=useState("");
 
-  // Images
   const [singleImg,setSingleImg]=useState(null);
   const [singleEl,setSingleEl]=useState(null);
   const [singleSize,setSingleSize]=useState({w:1280,h:720});
   const [batchImgs,setBatchImgs]=useState([]);
   const [batchSel,setBatchSel]=useState(0);
 
-  // Position & style
-  const [textX,setTextX]=useState(0.025);
-  const [textY,setTextY]=useState(0.72);
+  // Text position as % of image
+  const [textX,setTextX]=useState(2.5);
+  const [textY,setTextY]=useState(72);
+
   const [overlay,setOverlay]=useState(0);
-  const [fontSize,setFontSize]=useState(20);
-  const [maxW,setMaxW]=useState(65);
-  const [bgEnabled,setBgEnabled]=useState(false);
+  const [fontSize,setFontSize]=useState(13);
+  const [maxWpct,setMaxWpct]=useState(55);
+  const [bgEnabled,setBgEnabled]=useState(true);
   const [bgColor,setBgColor]=useState("#000000");
-  const [bgOpacity,setBgOpacity]=useState(50);
+  const [bgOpacity,setBgOpacity]=useState(85);
 
   const [dragging,setDragging]=useState(false);
   const [exporting,setExporting]=useState(false);
@@ -193,75 +155,30 @@ function App(){
 
   const fileRef=useRef(null);
   const batchFileRef=useRef(null);
-  const previewRef=useRef(null);
-  const wrapRef=useRef(null);
+  const previewRef=useRef(null);   // the preview container div
+  const wrapRef=useRef(null);      // outer sizing div
   const textareaRef=useRef(null);
   const dragStart=useRef(null);
+  const chatNodeRef=useRef(null);  // the actual chat HTML node in preview
 
   const lines=input.split("\n").map(parseLine);
-  const activeImg=tab==="single"?singleEl:(batchImgs[batchSel]?.el||null);
+  const activeImg=tab==="single"?singleImg:(batchImgs[batchSel]?.src||null);
   const activeSize=tab==="single"?singleSize:(batchImgs[batchSel]?{w:batchImgs[batchSel].w,h:batchImgs[batchSel].h}:{w:1280,h:720});
-  const fontPx=(w)=>Math.round(fontSize*(w/1280));
 
-  // ── Insert text at cursor ─────────────────────────────────────────────────
-  const insertAtCursor=(prefix)=>{
-    const ta=textareaRef.current;
-    if(!ta) return;
-    const start=ta.selectionStart;
-    const end=ta.selectionEnd;
-    const val=input;
-    // go to start of current line
-    const lineStart=val.lastIndexOf("\n",start-1)+1;
-    const before=val.slice(0,lineStart);
-    const after=val.slice(lineStart);
-    // add newline before if not at start
-    const needNL=lineStart>0&&val[lineStart-1]!=="\n";
-    const insertion=(needNL?"\n":"")+prefix;
-    const newVal=before+insertion+after;
-    setInput(newVal);
-    setTimeout(()=>{
-      ta.focus();
-      const pos=lineStart+(needNL?1:0)+prefix.length;
-      ta.setSelectionRange(pos,pos);
-    },0);
-  };
+  // preview width
+  const [previewW,setPreviewW]=useState(600);
+  useEffect(()=>{
+    const wrap=wrapRef.current; if(!wrap) return;
+    const ro=new ResizeObserver(()=>setPreviewW(wrap.offsetWidth));
+    ro.observe(wrap); return()=>ro.disconnect();
+  },[]);
 
-  const getActiveCharName=()=>{
-    const c=chars.find(c=>c.id===activeChar);
-    return c?c.name:"";
-  };
+  const previewH=Math.round(previewW*(activeSize.h/activeSize.w));
+  // scale font for preview vs export
+  const previewFontSize=Math.round(fontSize*(previewW/activeSize.w));
+  const previewMaxW=Math.round(previewW*(maxWpct/100));
 
-  const insertFala=()=>{
-    const name=getActiveCharName();
-    insertAtCursor(name?`${name} diz (normal): `:"");
-  };
-  const insertMe=()=>{
-    const name=getActiveCharName();
-    insertAtCursor(name?`* ${name} `:"* ");
-  };
-  const insertDo=()=>{
-    insertAtCursor("* ");
-  };
-  const insertItem=()=>insertAtCursor("$ ");
-  const insertPhone=()=>insertAtCursor("# ");
-  const insertSystem=()=>insertAtCursor("! ");
-  const insertOoc=()=>insertAtCursor("(( ");
-
-  // ── Add/remove characters ─────────────────────────────────────────────────
-  const addChar=()=>{
-    if(!newName.trim()) return;
-    const id=Date.now();
-    const color=CHAR_COLORS[chars.length%CHAR_COLORS.length];
-    setChars(prev=>[...prev,{id,name:newName.trim(),color}]);
-    setActiveChar(id);
-    setNewName("");
-  };
-  const removeChar=(id)=>{
-    setChars(prev=>prev.filter(c=>c.id!==id));
-    if(activeChar===id) setActiveChar(chars.find(c=>c.id!==id)?.id||null);
-  };
-
-  // ── Image loading ─────────────────────────────────────────────────────────
+  // ── Load image ─────────────────────────────────────────────────────────────
   const loadImg=(file,cb)=>{
     if(!file?.type.startsWith("image/")) return;
     const r=new FileReader();
@@ -276,24 +193,7 @@ function App(){
   const handleSingle=f=>loadImg(f,({src,el,w,h})=>{setSingleImg(src);setSingleEl(el);setSingleSize({w,h});});
   const handleBatch=files=>Array.from(files).forEach(f=>loadImg(f,d=>setBatchImgs(p=>[...p,{id:Date.now()+Math.random(),...d}])));
 
-  // ── Draw preview ──────────────────────────────────────────────────────────
-  const drawPreview=useCallback(()=>{
-    const canvas=previewRef.current,wrap=wrapRef.current;
-    if(!canvas||!wrap) return;
-    const PW=wrap.offsetWidth;
-    const PH=Math.round(PW*(activeSize.h/activeSize.w));
-    canvas.width=PW;canvas.height=PH;
-    renderToCanvas(canvas.getContext("2d"),PW,PH,{bgImg:activeImg,overlay,lines,textXpct:textX,textYpct:textY,maxWpct:maxW,fontPx:fontPx(PW),bgEnabled,bgColor,bgOpacity});
-  },[activeImg,activeSize,overlay,lines,textX,textY,maxW,fontSize,bgEnabled,bgColor,bgOpacity]);
-
-  useEffect(()=>{drawPreview();},[drawPreview]);
-  useEffect(()=>{
-    const wrap=wrapRef.current;if(!wrap)return;
-    const ro=new ResizeObserver(()=>drawPreview());
-    ro.observe(wrap);return()=>ro.disconnect();
-  },[drawPreview]);
-
-  // ── Drag text ─────────────────────────────────────────────────────────────
+  // ── Drag text ───────────────────────────────────────────────────────────────
   const onMouseDown=e=>{
     e.preventDefault();
     setDragging(true);
@@ -302,11 +202,13 @@ function App(){
   useEffect(()=>{
     const onMove=e=>{
       if(!dragging) return;
-      const canvas=previewRef.current;if(!canvas)return;
+      const wrap=wrapRef.current; if(!wrap) return;
       const {mx,my,tx,ty}=dragStart.current;
-      const rect=canvas.getBoundingClientRect();
-      setTextX(v=>Math.min(0.95,Math.max(0,tx+(e.clientX-mx)/rect.width)));
-      setTextY(v=>Math.min(0.95,Math.max(0,ty+(e.clientY-my)/rect.height)));
+      const rect=wrap.getBoundingClientRect();
+      const dx=(e.clientX-mx)/rect.width*100;
+      const dy=(e.clientY-my)/rect.height*100;
+      setTextX(v=>Math.min(95,Math.max(0,tx+dx)));
+      setTextY(v=>Math.min(95,Math.max(0,ty+dy)));
     };
     const onUp=()=>setDragging(false);
     window.addEventListener("mousemove",onMove);
@@ -314,22 +216,110 @@ function App(){
     return()=>{window.removeEventListener("mousemove",onMove);window.removeEventListener("mouseup",onUp);};
   },[dragging]);
 
-  // ── Export ────────────────────────────────────────────────────────────────
-  const exportSingle=()=>{
-    const EW=singleSize.w,EH=singleSize.h;
-    const c=document.createElement("canvas");c.width=EW;c.height=EH;
-    renderToCanvas(c.getContext("2d"),EW,EH,{bgImg:singleEl,overlay,lines,textXpct:textX,textYpct:textY,maxWpct:maxW,fontPx:fontPx(EW),bgEnabled,bgColor,bgOpacity});
-    c.toBlob(blob=>{const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="chatlog_chicago.png";a.click();URL.revokeObjectURL(url);},"image/png");
+  // ── Insert at cursor ────────────────────────────────────────────────────────
+  const insertAt=(prefix)=>{
+    const ta=textareaRef.current; if(!ta) return;
+    const s=ta.selectionStart;
+    const lineStart=input.lastIndexOf("\n",s-1)+1;
+    const before=input.slice(0,lineStart);
+    const after=input.slice(lineStart);
+    const needNL=lineStart>0&&input[lineStart-1]!=="\n";
+    const ins=(needNL?"\n":"")+prefix;
+    setInput(before+ins+after);
+    setTimeout(()=>{ta.focus();const p=lineStart+(needNL?1:0)+prefix.length;ta.setSelectionRange(p,p);},0);
   };
+  const getChar=()=>chars.find(c=>c.id===activeChar);
+  const insertFala=()=>{const c=getChar();insertAt(c?`${c.name} diz (normal): `:"");};
+  const insertMe=()=>{const c=getChar();insertAt(c?`* ${c.name} `:"* ");};
+  const insertDo=()=>insertAt("* ");
+
+  // ── Add/remove chars ────────────────────────────────────────────────────────
+  const addChar=()=>{
+    if(!newName.trim()) return;
+    const id=Date.now();
+    setChars(p=>[...p,{id,name:newName.trim(),color:CHAR_COLORS[p.length%CHAR_COLORS.length]}]);
+    setActiveChar(id);setNewName("");
+  };
+  const removeChar=id=>{
+    setChars(p=>p.filter(c=>c.id!==id));
+    if(activeChar===id) setActiveChar(chars.find(c=>c.id!==id)?.id||null);
+  };
+
+  // ── Export using dom-to-image ───────────────────────────────────────────────
+  const doExport=async(imgSrc,imgEl,imgW,imgH,filename)=>{
+    const EW=imgW, EH=imgH;
+    const expFontSize=fontSize;
+    const expMaxW=Math.round(EW*(maxWpct/100));
+    const chatHTML=buildChatHTML(lines,expFontSize,bgEnabled,bgColor,bgOpacity,expMaxW);
+
+    // Build offscreen container
+    const stage=document.getElementById("render-stage");
+    stage.innerHTML="";
+    const container=document.createElement("div");
+    container.style.cssText=`width:${EW}px;height:${EH}px;position:relative;overflow:hidden;`;
+
+    // BG image
+    if(imgSrc){
+      const bg=document.createElement("div");
+      bg.style.cssText=`position:absolute;inset:0;background-image:url(${imgSrc});background-size:100% 100%;`;
+      container.appendChild(bg);
+      if(overlay>0){
+        const ov=document.createElement("div");
+        ov.style.cssText=`position:absolute;inset:0;background:rgba(12,17,26,${overlay/100});`;
+        container.appendChild(ov);
+      }
+    } else {
+      container.style.background="#0f1623";
+    }
+
+    // Chat text positioned
+    const textDiv=document.createElement("div");
+    textDiv.style.cssText=`position:absolute;left:${textX/100*EW}px;top:${textY/100*EH}px;`;
+    textDiv.innerHTML=chatHTML;
+    container.appendChild(textDiv);
+    stage.appendChild(container);
+
+    // Render
+    const blob=await domtoimage.toBlob(container,{width:EW,height:EH});
+    stage.innerHTML="";
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;a.download=filename;a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportSingle=async()=>{
+    setExporting(true);
+    await doExport(singleImg,singleEl,singleSize.w,singleSize.h,"chatlog_chicago.png");
+    setExporting(false);
+  };
+
   const exportBatch=async()=>{
     if(!batchImgs.length) return;
     setExporting(true);setExportPct(0);
     const zip=new JSZip();
     for(let i=0;i<batchImgs.length;i++){
       const img=batchImgs[i];
-      const c=document.createElement("canvas");c.width=img.w;c.height=img.h;
-      renderToCanvas(c.getContext("2d"),img.w,img.h,{bgImg:img.el,overlay,lines,textXpct:textX,textYpct:textY,maxWpct:maxW,fontPx:fontPx(img.w),bgEnabled,bgColor,bgOpacity});
-      const blob=await new Promise(res=>c.toBlob(res,"image/png"));
+      const EW=img.w,EH=img.h;
+      const expMaxW=Math.round(EW*(maxWpct/100));
+      const chatHTML=buildChatHTML(lines,fontSize,bgEnabled,bgColor,bgOpacity,expMaxW);
+      const stage=document.getElementById("render-stage");
+      stage.innerHTML="";
+      const container=document.createElement("div");
+      container.style.cssText=`width:${EW}px;height:${EH}px;position:relative;overflow:hidden;`;
+      if(img.src){
+        const bg=document.createElement("div");
+        bg.style.cssText=`position:absolute;inset:0;background-image:url(${img.src});background-size:100% 100%;`;
+        container.appendChild(bg);
+        if(overlay>0){const ov=document.createElement("div");ov.style.cssText=`position:absolute;inset:0;background:rgba(12,17,26,${overlay/100});`;container.appendChild(ov);}
+      } else container.style.background="#0f1623";
+      const textDiv=document.createElement("div");
+      textDiv.style.cssText=`position:absolute;left:${textX/100*EW}px;top:${textY/100*EH}px;`;
+      textDiv.innerHTML=chatHTML;
+      container.appendChild(textDiv);
+      stage.appendChild(container);
+      const blob=await domtoimage.toBlob(container,{width:EW,height:EH});
+      stage.innerHTML="";
       zip.file(img.name.replace(/\.[^/.]+$/,"")+`_chatlog.png`,blob);
       setExportPct(Math.round(((i+1)/batchImgs.length)*100));
     }
@@ -337,6 +327,9 @@ function App(){
     const url=URL.createObjectURL(zb);const a=document.createElement("a");a.href=url;a.download="chatlogs_chicago.zip";a.click();URL.revokeObjectURL(url);
     setExporting(false);setExportPct(0);
   };
+
+  // Build preview chat HTML
+  const chatPreviewHTML=buildChatHTML(lines,previewFontSize,bgEnabled,bgColor,bgOpacity,previewMaxW);
 
   return(
     <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column",alignItems:"center"}}>
@@ -354,9 +347,9 @@ function App(){
       </header>
 
       <main style={{width:"100%",maxWidth:1080,padding:"18px",boxSizing:"border-box"}}>
-        <div style={{display:"grid",gridTemplateColumns:"300px 1fr",gap:18}}>
+        <div style={{display:"grid",gridTemplateColumns:"290px 1fr",gap:18}}>
 
-          {/* ── LEFT ── */}
+          {/* LEFT */}
           <div style={{display:"flex",flexDirection:"column",gap:11}}>
 
             {/* Tabs */}
@@ -365,7 +358,7 @@ function App(){
               <button className={`tab ${tab==="batch"?"active":""}`} onClick={()=>setTab("batch")}>LOTE (ZIP)</button>
             </div>
 
-            {/* Image input */}
+            {/* Image */}
             {tab==="single"?(
               <Block label="FOTO DE FUNDO">
                 <div onClick={()=>fileRef.current?.click()} style={{border:`1.5px dashed ${singleImg?C.yellow+"44":"#ffffff15"}`,borderRadius:7,cursor:"pointer",overflow:"hidden",minHeight:singleImg?0:52,display:"flex",alignItems:"center",justifyContent:"center",background:"#00000020"}}>
@@ -387,26 +380,22 @@ function App(){
                   <input ref={batchFileRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={e=>handleBatch(e.target.files)}/>
                   <span style={{color:C.yellow,fontSize:11}}>+ Adicionar fotos</span>
                 </div>
-                {batchImgs.length>0&&(
-                  <div style={{display:"flex",flexWrap:"wrap",gap:5,maxHeight:130,overflowY:"auto",marginBottom:8}}>
-                    {batchImgs.map((img,i)=>(
-                      <div key={img.id} className={`img-thumb ${batchSel===i?"selected":""}`} style={{width:62,height:44}} onClick={()=>setBatchSel(i)}>
-                        <img src={img.src} style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
-                        <button className="rm" onClick={e=>{e.stopPropagation();setBatchImgs(p=>p.filter(x=>x.id!==img.id));if(batchSel>=i&&batchSel>0)setBatchSel(batchSel-1);}}>✕</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                {batchImgs.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:5,maxHeight:120,overflowY:"auto",marginBottom:8}}>
+                  {batchImgs.map((img,i)=>(
+                    <div key={img.id} className={`img-thumb ${batchSel===i?"selected":""}`} style={{width:62,height:44}} onClick={()=>setBatchSel(i)}>
+                      <img src={img.src} style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+                      <button className="rm" onClick={e=>{e.stopPropagation();setBatchImgs(p=>p.filter(x=>x.id!==img.id));if(batchSel>=i&&batchSel>0)setBatchSel(batchSel-1);}}>✕</button>
+                    </div>
+                  ))}
+                </div>}
                 {batchImgs.length>0&&<Slider label="ESCURECIMENTO" value={overlay} min={0} max={85} onChange={setOverlay} unit="%"/>}
               </Block>
             )}
 
-            {/* ── CHARACTERS ── */}
+            {/* Characters */}
             <Block label="PERSONAGENS">
-              {/* Add character */}
               <div style={{display:"flex",gap:6,marginBottom:10}}>
-                <input value={newName} onChange={e=>setNewName(e.target.value)}
-                  onKeyDown={e=>e.key==="Enter"&&addChar()}
+                <input value={newName} onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addChar()}
                   placeholder="Nome do personagem"
                   style={{flex:1,background:"#0a0f17",border:"1px solid #ffffff0c",borderRadius:6,color:"#c8d0dc",fontSize:11,padding:"6px 10px",outline:"none"}}/>
                 <button onClick={addChar} disabled={!newName.trim()}
@@ -414,46 +403,39 @@ function App(){
                   + ADD
                 </button>
               </div>
-
-              {/* Character bubbles */}
-              {chars.length===0&&<div style={{color:"#2a3a50",fontSize:11,textAlign:"center",padding:"8px 0"}}>Nenhum personagem adicionado</div>}
-              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:chars.length?10:0}}>
+              {chars.length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:10}}>
                 {chars.map(c=>(
                   <div key={c.id} className={`char-bubble ${activeChar===c.id?"active":""}`}
                     style={{background:c.color+"22",borderColor:activeChar===c.id?c.color+"88":"transparent"}}
                     onClick={()=>setActiveChar(c.id)}>
-                    <div style={{width:8,height:8,borderRadius:"50%",background:c.color,flexShrink:0}}/>
+                    <div style={{width:7,height:7,borderRadius:"50%",background:c.color,flexShrink:0}}/>
                     <span style={{color:c.color}}>{c.name}</span>
-                    <button onClick={e=>{e.stopPropagation();removeChar(c.id);}} style={{background:"transparent",border:"none",color:c.color+"88",cursor:"pointer",fontSize:10,padding:"0 0 0 2px",lineHeight:1}}>✕</button>
+                    <button onClick={e=>{e.stopPropagation();removeChar(c.id);}} style={{background:"transparent",border:"none",color:c.color+"88",cursor:"pointer",fontSize:10,padding:"0 0 0 2px"}}>✕</button>
                   </div>
                 ))}
-              </div>
-
-              {/* Quick insert buttons */}
-              {chars.length>0&&(
-                <div>
-                  <div style={{fontSize:9,color:"#3d4a5c",letterSpacing:2,marginBottom:6}}>INSERIR NO TEXTO</div>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-                    <button className="action-btn fala" onClick={insertFala} title="Fala normal com nome do personagem">💬 FALA</button>
-                    <button className="action-btn me"   onClick={insertMe}  title="/me — ação com nome do personagem">★ /ME</button>
-                    <button className="action-btn do"   onClick={insertDo}  title="/do — ação de cena sem nome">◈ /DO</button>
-                    <button className="action-btn" style={{borderColor:"#6ecfa844",color:"#6ecfa8"}} onClick={insertItem}  title="Item entregue">$ ITEM</button>
-                    <button className="action-btn" style={{borderColor:"#7dd3fc44",color:"#7dd3fc"}} onClick={insertPhone} title="Ligação celular"># CEL</button>
-                    <button className="action-btn" style={{borderColor:"#f8717144",color:"#f87171"}} onClick={insertSystem} title="Mensagem sistema">! SIS</button>
-                    <button className="action-btn" style={{borderColor:"#94a3b844",color:"#94a3b8"}} onClick={insertOoc}   title="OOC">(( OOC</button>
-                  </div>
-                  <div style={{fontSize:9,color:"#2a3a50",marginTop:7}}>
-                    Personagem ativo: <span style={{color:chars.find(c=>c.id===activeChar)?.color||"#555",fontWeight:700}}>{chars.find(c=>c.id===activeChar)?.name||"—"}</span>
-                  </div>
+              </div>}
+              {chars.length>0&&<div>
+                <div style={{fontSize:9,color:"#3d4a5c",letterSpacing:2,marginBottom:6}}>INSERIR NO TEXTO</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                  <button className="action-btn" style={{borderColor:"#ffffff25",color:"#fff"}} onClick={insertFala}>💬 FALA</button>
+                  <button className="action-btn" style={{borderColor:"#cc99ff44",color:"#cc99ff"}} onClick={insertMe}>★ /ME</button>
+                  <button className="action-btn" style={{borderColor:"#cc99ff22",color:"#9966cc"}} onClick={insertDo}>◈ /DO</button>
+                  <button className="action-btn" style={{borderColor:"#6ecfa844",color:"#6ecfa8"}} onClick={()=>insertAt("$ ")}>$ ITEM</button>
+                  <button className="action-btn" style={{borderColor:"#f5c50044",color:"#f5c500"}} onClick={()=>insertAt("# ")}># CEL</button>
+                  <button className="action-btn" style={{borderColor:"#f8717144",color:"#f87171"}} onClick={()=>insertAt("! ")}>! SIS</button>
+                  <button className="action-btn" style={{borderColor:"#94a3b844",color:"#94a3b8"}} onClick={()=>insertAt("(( ")}>(( OOC</button>
                 </div>
-              )}
+                <div style={{fontSize:9,color:"#2a3a50",marginTop:6}}>
+                  Ativo: <span style={{color:chars.find(c=>c.id===activeChar)?.color||"#555",fontWeight:700}}>{chars.find(c=>c.id===activeChar)?.name||"—"}</span>
+                </div>
+              </div>}
             </Block>
 
             {/* Textarea */}
             <Block label="TEXTO DO CHAT LOG">
               <textarea ref={textareaRef} value={input} onChange={e=>setInput(e.target.value)}
-                placeholder={"Clique nos botões acima para inserir linhas\nou escreva diretamente aqui..."}
-                style={{width:"100%",height:160,background:"#0a0f17",border:"1px solid #ffffff0c",borderRadius:6,color:"#c8d0dc",fontFamily:"'Courier New',monospace",fontSize:11.5,lineHeight:1.7,padding:"9px 11px",resize:"vertical",outline:"none",boxSizing:"border-box"}}/>
+                placeholder={"Clique nos botões acima para inserir linhas..."}
+                style={{width:"100%",height:150,background:"#0a0f17",border:"1px solid #ffffff0c",borderRadius:6,color:"#c8d0dc",fontFamily:"'Courier New',monospace",fontSize:11.5,lineHeight:1.7,padding:"9px 11px",resize:"vertical",outline:"none",boxSizing:"border-box"}}/>
             </Block>
 
             {/* Style */}
@@ -461,10 +443,10 @@ function App(){
               <div style={{display:"flex",flexDirection:"column",gap:10}}>
                 <div style={{display:"flex",alignItems:"center",gap:7}}>
                   <button onClick={()=>setFontSize(s=>Math.max(8,s-1))} style={sBtn}>−</button>
-                  <Slider label="TAMANHO DA FONTE" value={fontSize} min={8} max={40} onChange={setFontSize} unit="px"/>
-                  <button onClick={()=>setFontSize(s=>Math.min(40,s+1))} style={sBtn}>+</button>
+                  <Slider label="TAMANHO DA FONTE" value={fontSize} min={8} max={32} onChange={setFontSize} unit="px"/>
+                  <button onClick={()=>setFontSize(s=>Math.min(32,s+1))} style={sBtn}>+</button>
                 </div>
-                <Slider label="LARGURA DO BLOCO" value={maxW} min={15} max={95} onChange={setMaxW} unit="%"/>
+                <Slider label="LARGURA DO BLOCO" value={maxWpct} min={15} max={95} onChange={setMaxWpct} unit="%"/>
                 <div>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:bgEnabled?8:0}}>
                     <span style={{fontSize:9,letterSpacing:2,color:"#3d4a5c"}}>FUNDO DO TEXTO</span>
@@ -473,12 +455,10 @@ function App(){
                       <span style={{fontSize:9,color:bgEnabled?C.yellow:C.muted}}>ATIVO</span>
                     </label>
                   </div>
-                  {bgEnabled&&(
-                    <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                      <input type="color" value={bgColor} onChange={e=>setBgColor(e.target.value)} style={{width:32,height:22,border:"none",background:"none",cursor:"pointer",borderRadius:3}}/>
-                      <div style={{flex:1}}><Slider label="OPACIDADE" value={bgOpacity} min={5} max={100} onChange={setBgOpacity} unit="%"/></div>
-                    </div>
-                  )}
+                  {bgEnabled&&<div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <input type="color" value={bgColor} onChange={e=>setBgColor(e.target.value)} style={{width:32,height:22,border:"none",background:"none",cursor:"pointer",borderRadius:3}}/>
+                    <div style={{flex:1}}><Slider label="OPACIDADE" value={bgOpacity} min={5} max={100} onChange={setBgOpacity} unit="%"/></div>
+                  </div>}
                 </div>
               </div>
             </Block>
@@ -488,14 +468,14 @@ function App(){
               <button onClick={()=>{setInput("");setSingleImg(null);setSingleEl(null);setBatchImgs([]);}}
                 style={{flex:1,borderRadius:6,padding:"8px",fontSize:10,letterSpacing:1.5,cursor:"pointer",fontWeight:700,background:"transparent",border:"1px solid #f8717130",color:"#f87171"}}>LIMPAR</button>
               {tab==="single"?(
-                <button onClick={exportSingle} disabled={!singleImg}
-                  style={{flex:2.5,borderRadius:6,padding:"8px",fontSize:10,letterSpacing:1.5,cursor:singleImg?"pointer":"not-allowed",fontWeight:900,border:"none",background:singleImg?C.yellow:"#1a2030",color:singleImg?C.navy:"#3d4a5c",fontFamily:"'Arial Black',sans-serif",boxShadow:singleImg?`0 3px 14px ${C.yellow}40`:"none"}}>
-                  ↓ EXPORTAR PNG
+                <button onClick={exportSingle} disabled={exporting||!singleImg}
+                  style={{flex:2.5,borderRadius:6,padding:"8px",fontSize:10,letterSpacing:1.5,cursor:(singleImg&&!exporting)?"pointer":"not-allowed",fontWeight:900,border:"none",background:(singleImg&&!exporting)?C.yellow:"#1a2030",color:(singleImg&&!exporting)?C.navy:"#3d4a5c",fontFamily:"'Arial Black',sans-serif",boxShadow:(singleImg&&!exporting)?`0 3px 14px ${C.yellow}40`:"none"}}>
+                  {exporting?"⏳ GERANDO...":"↓ EXPORTAR PNG"}
                 </button>
               ):(
                 <button onClick={exportBatch} disabled={exporting||!batchImgs.length}
                   style={{flex:2.5,borderRadius:6,padding:"8px",fontSize:10,letterSpacing:1,cursor:(batchImgs.length&&!exporting)?"pointer":"not-allowed",fontWeight:900,border:"none",background:(batchImgs.length&&!exporting)?C.yellow:"#1a2030",color:(batchImgs.length&&!exporting)?C.navy:"#3d4a5c",fontFamily:"'Arial Black',sans-serif"}}>
-                  {exporting?`⏳ ${exportPct}%`:`↓ ZIP (${batchImgs.length} fotos)`}
+                  {exporting?`⏳ ${exportPct}%`:`↓ ZIP (${batchImgs.length})`}
                 </button>
               )}
             </div>
@@ -503,28 +483,61 @@ function App(){
             {/* Legend */}
             <Block label="LEGENDA">
               <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                {LEGEND.map(({prefix,label,color})=>(
-                  <div key={prefix} style={{display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{background:color+"15",border:`1px solid ${color}35`,color,borderRadius:4,padding:"1px 6px",fontFamily:"monospace",fontSize:10,minWidth:22,textAlign:"center",fontWeight:700}}>{prefix}</span>
-                    <span style={{color:C.muted,fontSize:10}}>{label}</span>
-                  </div>
-                ))}
+                {LEGEND.map(({prefix,css,label})=>{
+                  const colors={action:"#cc99ff",item:"#6ecfa8",phone:"#f5c500",system:"#f87171",ooc:"#94a3b8",speech:"#ffffff"};
+                  const color=colors[css]||"#fff";
+                  return(
+                    <div key={prefix} style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{background:color+"15",border:`1px solid ${color}35`,color,borderRadius:4,padding:"1px 6px",fontFamily:"monospace",fontSize:10,minWidth:22,textAlign:"center",fontWeight:700}}>{prefix}</span>
+                      <span style={{color:C.muted,fontSize:10}}>{label}</span>
+                    </div>
+                  );
+                })}
               </div>
             </Block>
           </div>
 
-          {/* ── RIGHT — PREVIEW ── */}
+          {/* RIGHT — PREVIEW */}
           <div>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
               <span style={{fontSize:9,letterSpacing:3,color:C.muted}}>PREVIEW</span>
-              <span style={{fontSize:9,color:"#1e2a3a"}}>— arraste o texto para reposicionar</span>
+              <span style={{fontSize:9,color:"#1e2a3a"}}>— arraste o texto</span>
               <div style={{flex:1,height:1,background:`linear-gradient(90deg,${C.yellow}20,transparent)`}}/>
               <span style={{fontSize:9,color:C.muted}}>{activeSize.w}×{activeSize.h}px</span>
             </div>
+
             <div ref={wrapRef} style={{width:"100%",borderRadius:10,overflow:"hidden",border:`1px solid ${C.yellow}15`,boxShadow:"0 8px 36px #00000055",background:C.navy}}>
-              <div style={{position:"relative",width:"100%",paddingTop:`${(activeSize.h/activeSize.w)*100}%`}}>
-                <canvas ref={previewRef} onMouseDown={onMouseDown}
-                  style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",display:"block",cursor:dragging?"grabbing":"grab"}}/>
+              <div
+                ref={previewRef}
+                onMouseDown={onMouseDown}
+                style={{
+                  position:"relative",
+                  width:"100%",
+                  paddingTop:`${(activeSize.h/activeSize.w)*100}%`,
+                  cursor:dragging?"grabbing":"grab",
+                  overflow:"hidden",
+                }}>
+                {/* BG image */}
+                {activeImg&&<div style={{position:"absolute",inset:0,backgroundImage:`url(${activeImg})`,backgroundSize:"100% 100%",zIndex:0}}/>}
+                {activeImg&&overlay>0&&<div style={{position:"absolute",inset:0,background:`rgba(12,17,26,${overlay/100})`,zIndex:1}}/>}
+                {!activeImg&&<div style={{position:"absolute",inset:0,background:C.navy,zIndex:0}}/>}
+
+                {/* Chat text — HTML rendered, positioned by % */}
+                <div
+                  style={{
+                    position:"absolute",
+                    left:`${textX}%`,
+                    top:`${textY}%`,
+                    zIndex:2,
+                    maxWidth:`${maxWpct}%`,
+                    pointerEvents:"none",
+                  }}
+                  dangerouslySetInnerHTML={{__html:chatPreviewHTML}}
+                />
+
+                {!input.trim()&&<div style={{position:"absolute",inset:0,zIndex:3,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <span style={{color:"#1e2a3a",fontSize:12}}>Preview aparecerá aqui...</span>
+                </div>}
               </div>
             </div>
           </div>
