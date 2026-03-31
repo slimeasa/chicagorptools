@@ -284,39 +284,56 @@ function App(){
     if(activeChar===id) setActiveChar(chars.find(c=>c.id!==id)?.id||null);
   };
 
-  // ── Export: render directly at full image resolution ─────────────────────────
+  // ── Export: text overlay at preview size → composite onto full-res image ──────
   const doExport=async(imgSrc,imgEl,imgW,imgH,filename)=>{
-    const scale = imgW / 1280; // scale factor relative to preview reference
-    const expFontSize = Math.round(fontSize * scale);
-    const expMaxW = Math.round(imgW * (maxWpct/100));
-    const shadowPx = Math.max(1, Math.round(scale)); // scale the outline too
+    const PW = previewW;
+    const PH = previewH;
 
-    const chatHTML = buildChatHTML(lines, expFontSize, bgEnabled, bgColor, bgOpacity, expMaxW, shadowPx);
+    // 1. Build text-only HTML (transparent bg behind image, keep user bg box)
+    const chatHTML = buildChatHTML(lines, previewFontSize, bgEnabled, bgColor, bgOpacity, previewMaxW, 1);
 
+    // 2. Render text overlay on transparent container
     const stage = document.getElementById("render-stage");
     stage.innerHTML = "";
     const container = document.createElement("div");
-    container.style.cssText = `width:${imgW}px;height:${imgH}px;position:relative;overflow:hidden;background:#0f1623;`;
+    container.style.cssText = `width:${PW}px;height:${PH}px;position:relative;overflow:hidden;background:transparent;`;
 
-    if(imgSrc){
-      const bg = document.createElement("div");
-      bg.style.cssText = `position:absolute;inset:0;background-image:url(${imgSrc});background-size:100% 100%;`;
-      container.appendChild(bg);
-      if(overlay>0){
-        const ov = document.createElement("div");
-        ov.style.cssText = `position:absolute;inset:0;background:rgba(12,17,26,${overlay/100});`;
-        container.appendChild(ov);
-      }
+    // Dark overlay on top of photo if set
+    if(imgSrc && overlay>0){
+      const ov = document.createElement("div");
+      ov.style.cssText = `position:absolute;inset:0;background:rgba(12,17,26,${overlay/100});`;
+      container.appendChild(ov);
     }
 
     const textDiv = document.createElement("div");
-    textDiv.style.cssText = `position:absolute;left:${textX/100*imgW}px;top:${textY/100*imgH}px;`;
+    textDiv.style.cssText = `position:absolute;left:${textX/100*PW}px;top:${textY/100*PH}px;`;
     textDiv.innerHTML = chatHTML;
     container.appendChild(textDiv);
     stage.appendChild(container);
 
-    const blob = await domtoimage.toBlob(container, {width:imgW, height:imgH});
+    const overlayDataUrl = await domtoimage.toPng(container, {width:PW, height:PH});
     stage.innerHTML = "";
+
+    // 3. Composite: draw full-res original image first, then scale overlay on top
+    const canvas = document.createElement("canvas");
+    canvas.width = imgW; canvas.height = imgH;
+    const ctx = canvas.getContext("2d");
+
+    if(imgEl){
+      ctx.drawImage(imgEl, 0, 0, imgW, imgH);
+    } else {
+      ctx.fillStyle = "#0f1623";
+      ctx.fillRect(0, 0, imgW, imgH);
+    }
+
+    // Draw text overlay scaled to full res
+    const overlayImg = new Image();
+    await new Promise(res => { overlayImg.onload = res; overlayImg.src = overlayDataUrl; });
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(overlayImg, 0, 0, imgW, imgH);
+
+    const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href=url; a.download=filename; a.click();
@@ -325,48 +342,60 @@ function App(){
 
   const exportSingle=async()=>{
     setExporting(true);
-    await doExport(singleImg,singleEl,singleSize.w,singleSize.h,"chatlog_chicago.png");
+    await doExport(singleImg, singleEl, singleSize.w, singleSize.h, "chatlog_chicago.png");
     setExporting(false);
   };
 
   const exportBatch=async()=>{
     if(!batchImgs.length) return;
-    setExporting(true);setExportPct(0);
-    const zip=new JSZip();
-    for(let i=0;i<batchImgs.length;i++){
-      const img=batchImgs[i];
-      setExportPct(Math.round((i/batchImgs.length)*100));
+    setExporting(true); setExportPct(0);
+    const zip = new JSZip();
+    for(let i=0; i<batchImgs.length; i++){
+      const img = batchImgs[i];
+      const bPH = Math.round(previewW*(img.h/img.w));
+      const chatHTML = buildChatHTML(lines, previewFontSize, bgEnabled, bgColor, bgOpacity, previewMaxW, 1);
 
-      const scale=img.w/1280;
-      const expFontSize=Math.round(fontSize*scale);
-      const expMaxW=Math.round(img.w*(maxWpct/100));
-      const shadowPx=Math.max(1,Math.round(scale));
-      const chatHTML=buildChatHTML(lines,expFontSize,bgEnabled,bgColor,bgOpacity,expMaxW,shadowPx);
-
-      const stage=document.getElementById("render-stage");
-      stage.innerHTML="";
-      const container=document.createElement("div");
-      container.style.cssText=`width:${img.w}px;height:${img.h}px;position:relative;overflow:hidden;background:#0f1623;`;
-      if(img.src){
-        const bg=document.createElement("div");
-        bg.style.cssText=`position:absolute;inset:0;background-image:url(${img.src});background-size:100% 100%;`;
-        container.appendChild(bg);
-        if(overlay>0){const ov=document.createElement("div");ov.style.cssText=`position:absolute;inset:0;background:rgba(12,17,26,${overlay/100});`;container.appendChild(ov);}
+      const stage = document.getElementById("render-stage");
+      stage.innerHTML = "";
+      const container = document.createElement("div");
+      container.style.cssText = `width:${previewW}px;height:${bPH}px;position:relative;overflow:hidden;background:transparent;`;
+      if(img.src && overlay>0){
+        const ov=document.createElement("div");
+        ov.style.cssText=`position:absolute;inset:0;background:rgba(12,17,26,${overlay/100});`;
+        container.appendChild(ov);
       }
-      const textDiv=document.createElement("div");
-      textDiv.style.cssText=`position:absolute;left:${textX/100*img.w}px;top:${textY/100*img.h}px;`;
-      textDiv.innerHTML=chatHTML;
+      const textDiv = document.createElement("div");
+      textDiv.style.cssText = `position:absolute;left:${textX/100*previewW}px;top:${textY/100*bPH}px;`;
+      textDiv.innerHTML = chatHTML;
       container.appendChild(textDiv);
       stage.appendChild(container);
 
-      const blob=await domtoimage.toBlob(container,{width:img.w,height:img.h});
-      stage.innerHTML="";
-      zip.file(img.name.replace(/\.[^/.]+$/,"")+`_chatlog.png`,blob);
+      const overlayDataUrl = await domtoimage.toPng(container, {width:previewW, height:bPH});
+      stage.innerHTML = "";
+
+      const canvas = document.createElement("canvas");
+      canvas.width = img.w; canvas.height = img.h;
+      const ctx = canvas.getContext("2d");
+      if(img.el){
+        ctx.drawImage(img.el, 0, 0, img.w, img.h);
+      } else {
+        ctx.fillStyle="#0f1623"; ctx.fillRect(0,0,img.w,img.h);
+      }
+      const overlayImg = new Image();
+      await new Promise(res => { overlayImg.onload = res; overlayImg.src = overlayDataUrl; });
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(overlayImg, 0, 0, img.w, img.h);
+
+      const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
+      zip.file(img.name.replace(/\.[^/.]+$/,"")+"_chatlog.png", blob);
       setExportPct(Math.round(((i+1)/batchImgs.length)*100));
     }
-    const zb=await zip.generateAsync({type:"blob"});
-    const url=URL.createObjectURL(zb);const a=document.createElement("a");a.href=url;a.download="chatlogs_chicago.zip";a.click();URL.revokeObjectURL(url);
-    setExporting(false);setExportPct(0);
+    const zb = await zip.generateAsync({type:"blob"});
+    const url = URL.createObjectURL(zb);
+    const a = document.createElement("a"); a.href=url; a.download="chatlogs_chicago.zip"; a.click();
+    URL.revokeObjectURL(url);
+    setExporting(false); setExportPct(0);
   };
 
   // Build preview chat HTML
