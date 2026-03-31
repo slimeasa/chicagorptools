@@ -26,18 +26,24 @@
     .char-bubble.active{border-color:rgba(255,255,255,0.4)}
     .action-btn{padding:5px 10px;border-radius:5px;border:1px solid #ffffff14;background:#0a0f17;color:#94a3b8;font-size:10px;font-weight:700;cursor:pointer;transition:all .15s;letter-spacing:1px}
     .action-btn:hover{background:#161f2e;color:#cbd5e1}
-    /* ── Chat line styles — exactly like GTA ── */
+    /* ── Chat line styles — matching chatlog-clean.com.br exactly ── */
     .chat-wrap{display:inline-block;padding:4px 6px;line-height:1.45;font-family:'Chalet London','ChaletLondon','Arial',sans-serif}
-    .chat-line{display:block;white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.4;font-family:'Chalet London','ChaletLondon','Arial',sans-serif}
+    .chat-line{display:block;white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.4;font-family:'Chalet London','ChaletLondon','Arial',sans-serif;font-weight:normal}
     .chat-line.has-bg {text-shadow:none}
     .chat-line.no-bg  {text-shadow:-1px 0 #000, 1px 0 #000, 0 -1px #000, 0 1px #000, -1px -1px #000, 1px -1px #000, -1px 1px #000, 1px 1px #000}
-    .chat-line.speech {color:#ffffff;font-weight:normal}
-    .chat-line.action  {color:#cc99ff;font-weight:normal}
-    .chat-line.item    {color:#6ecfa8;font-weight:normal}
-    .chat-line.phone   {color:#f5c500;font-weight:normal}
-    .chat-line.system  {color:#f87171;font-weight:bold}
-    .chat-line.ooc     {color:#94a3b8;font-weight:normal}
-    .chat-line.empty   {display:block;height:4px}
+    /* class names match their CSS class names */
+    .chat-line.white      {color:#ffffff}
+    .chat-line.me         {color:#cc99ff}   /* * actions */
+    .chat-line.ame        {color:#cc99ff}   /* > /ame */
+    .chat-line.yellow     {color:#f5c500}   /* celular, ! system */
+    .chat-line.green      {color:#6ecfa8}   /* $ itens */
+    .chat-line.death      {color:#f87171}   /* mortes, CK */
+    .chat-line.blue       {color:#7dd3fc}   /* info */
+    .chat-line.grey       {color:#aaaaaa}   /* baixo */
+    .chat-line.darkgrey   {color:#888888}   /* sussurrando */
+    .chat-line.lightgrey  {color:#cccccc}
+    .chat-line.ooc        {color:#94a3b8}   /* (( )) */
+    .chat-line.empty      {display:block;height:4px}
   </style>
 </head>
 <body>
@@ -53,29 +59,58 @@ const CHAR_COLORS=["#f5c500","#6ecfa8","#7dd3fc","#f87171","#cc99ff","#ffa94d","
 
 function parseLine(line){
   const t=line.trimStart();
-  if(!t) return {type:"empty",content:""};
-  if(t[0]==="*") return {type:"action", content:line};
-  if(t[0]==="$") return {type:"item",   content:line};
-  if(t[0]==="#") return {type:"phone",  content:line};
-  if(t[0]==="!") return {type:"system", content:line};
+  const low=t.toLowerCase();
+  if(!t) return {type:"empty", content:""};
+
+  // * /me and /do → purple (class "me")
+  if(t[0]==="*") return {type:"me", content:line};
+
+  // > /ame → purple (same color as me)
+  if(t[0]===">") return {type:"ame", content:line};
+
+  // $ item → green
+  if(t[0]==="$") return {type:"green", content:line};
+
+  // ! system → yellow (they strip the ! and show yellow)
+  if(t[0]==="!") return {type:"yellow", content:line.slice(1).trimStart()};
+
+  // (( )) OOC → grey
   if(t.startsWith("((")) return {type:"ooc", content:line};
-  return {type:"speech", content:line};
+
+  // diz (celular): → yellow
+  if(/\bdiz\b\s*\(\s*celular\s*\)/.test(low)) return {type:"yellow", content:line};
+
+  // diz (sussurrando/sussurando): → darkgrey
+  if(/\bdiz\b\s*\(\s*(?:sussurrando|sussurando)\s*\)/.test(low)) return {type:"darkgrey", content:line};
+
+  // diz (baixo): → grey
+  if(/\bdiz\b\s*\(\s*baixo\s*\)/.test(low)) return {type:"grey", content:line};
+
+  // diz (gritando): → white
+  if(/\bdiz\b\s*\(\s*gritando\s*\)/.test(low)) return {type:"white", content:line};
+
+  // # phone prefix → yellow
+  if(t[0]==="#") return {type:"yellow", content:line.slice(1).trimStart()};
+
+  // default speech → white
+  return {type:"white", content:line};
 }
 
 const DEFAULT_TEXT=`* Marcus Webb encosta o carro devagar no beco escuro, apagando os faróis antes de parar.
 Marcus Webb diz (normal): Desce aqui, sem chamar atenção.
 * Marcus Webb sai do veículo, ajustando o capuz e olhando pros dois lados da rua.
 ! Você recebeu $2,500 de Marcus Webb.
-Danny Reeves diz (normal): Tá bom... mas se der errado, eu nunca estive aqui.
+Danny Reeves diz (celular): Tá bom... mas se der errado, eu nunca estive aqui.
 * Danny Reeves puxa o zíper do casaco até o queixo e some na escuridão do beco.`;
 
 const LEGEND=[
-  {prefix:"*",  css:"action", label:"/me e /do"},
-  {prefix:"$",  css:"item",   label:"itens entregues"},
-  {prefix:"#",  css:"phone",  label:"ligações (amarelo)"},
-  {prefix:"!",  css:"system", label:"mensagens do sistema"},
-  {prefix:"((", css:"ooc",    label:"OOC"},
-  {prefix:"—",  css:"speech", label:"fala normal"},
+  {type:"me",       prefix:"*",   label:"/me e /do — ações"},
+  {type:"white",    prefix:"—",   label:"fala normal"},
+  {type:"yellow",   prefix:"!",   label:"sistema / celular"},
+  {type:"green",    prefix:"$",   label:"itens entregues"},
+  {type:"grey",     prefix:"—",   label:"diz (baixo)"},
+  {type:"darkgrey", prefix:"—",   label:"diz (sussurrando)"},
+  {type:"ooc",      prefix:"((",  label:"OOC"},
 ];
 
 // ── Build the HTML chat block ──────────────────────────────────────────────────
@@ -483,11 +518,11 @@ function App(){
             {/* Legend */}
             <Block label="LEGENDA">
               <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                {LEGEND.map(({prefix,css,label})=>{
-                  const colors={action:"#cc99ff",item:"#6ecfa8",phone:"#f5c500",system:"#f87171",ooc:"#94a3b8",speech:"#ffffff"};
-                  const color=colors[css]||"#fff";
+                {LEGEND.map(({type,prefix,label})=>{
+                  const colors={me:"#cc99ff",ame:"#cc99ff",white:"#ffffff",yellow:"#f5c500",green:"#6ecfa8",death:"#f87171",grey:"#aaaaaa",darkgrey:"#888888",lightgrey:"#cccccc",ooc:"#94a3b8",blue:"#7dd3fc"};
+                  const color=colors[type]||"#fff";
                   return(
-                    <div key={prefix} style={{display:"flex",alignItems:"center",gap:8}}>
+                    <div key={type+prefix} style={{display:"flex",alignItems:"center",gap:8}}>
                       <span style={{background:color+"15",border:`1px solid ${color}35`,color,borderRadius:4,padding:"1px 6px",fontFamily:"monospace",fontSize:10,minWidth:22,textAlign:"center",fontWeight:700}}>{prefix}</span>
                       <span style={{color:C.muted,fontSize:10}}>{label}</span>
                     </div>
