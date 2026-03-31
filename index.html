@@ -10,18 +10,25 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <style>
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-    body{background:#0c111a;font-family:sans-serif}
+    body{background:#0c111a;font-family:sans-serif;color:#cbd5e1}
     input[type=range]{cursor:pointer;accent-color:#f5c500}
     textarea::-webkit-scrollbar{width:5px}
     textarea::-webkit-scrollbar-thumb{background:#1e2a3a;border-radius:3px}
-    .tab{cursor:pointer;padding:8px 18px;font-size:11px;letter-spacing:2px;font-weight:700;border:none;background:transparent;transition:.15s}
-    .tab.active{color:#f5c500;border-bottom:2px solid #f5c500}
-    .tab.inactive{color:#3d4a5c;border-bottom:2px solid transparent}
-    .tab.inactive:hover{color:#6b7a8d}
+    .tab{cursor:pointer;padding:8px 16px;font-size:10px;letter-spacing:2px;font-weight:700;border:none;background:transparent;transition:.15s;color:#3d4a5c;border-bottom:2px solid transparent}
+    .tab.active{color:#f5c500;border-bottom-color:#f5c500}
+    .tab:hover:not(.active){color:#6b7a8d}
     .img-thumb{position:relative;cursor:pointer;border-radius:6px;overflow:hidden;border:2px solid transparent;transition:.15s}
     .img-thumb.selected{border-color:#f5c500}
-    .img-thumb:hover .remove-btn{opacity:1}
-    .remove-btn{position:absolute;top:3px;right:3px;background:#cf6e6e;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:10px;cursor:pointer;opacity:0;transition:.15s;display:flex;align-items:center;justify-content:center}
+    .img-thumb:hover .rm{opacity:1}
+    .rm{position:absolute;top:3px;right:3px;background:#cf6e6e;color:#fff;border:none;border-radius:50%;width:17px;height:17px;font-size:9px;cursor:pointer;opacity:0;transition:.15s;display:flex;align-items:center;justify-content:center}
+    .char-bubble{display:inline-flex;align-items:center;gap:5px;padding:4px 10px 4px 6px;border-radius:20px;cursor:pointer;border:1.5px solid transparent;transition:all .15s;font-size:11px;font-weight:700;user-select:none}
+    .char-bubble:hover{filter:brightness(1.15)}
+    .char-bubble.active{border-color:rgba(255,255,255,0.5)}
+    .action-btn{padding:5px 10px;border-radius:5px;border:1px solid #ffffff14;background:#0a0f17;color:#94a3b8;font-size:10px;font-weight:700;cursor:pointer;transition:all .15s;letter-spacing:1px}
+    .action-btn:hover{background:#161f2e;color:#cbd5e1}
+    .action-btn.fala{border-color:#ffffff25;color:#ffffff}
+    .action-btn.me{border-color:#cc99ff44;color:#cc99ff}
+    .action-btn.do{border-color:#cc99ff22;color:#9966cc}
   </style>
 </head>
 <body>
@@ -29,13 +36,12 @@
 <script type="text/babel">
 const {useState,useRef,useCallback,useEffect} = React;
 
-// ── Palette ──────────────────────────────────────────────────────────────────
-const C = {bg:"#0c111a",navy:"#0f1623",yellow:"#f5c500",muted:"#3d4a5c",text:"#cbd5e1"};
-const LC = {action:"#cc99ff",item:"#6ecfa8",phone:"#7dd3fc",system:"#f87171",ooc:"#94a3b8",default:"#ffffff"};
+const C={bg:"#0c111a",navy:"#0f1623",yellow:"#f5c500",muted:"#3d4a5c"};
+const LC={action:"#cc99ff",item:"#6ecfa8",phone:"#7dd3fc",system:"#f87171",ooc:"#94a3b8",default:"#ffffff"};
 
-// ── Text parsing — match GTA chat style ──────────────────────────────────────
-// * action  → purple italic
-// default   → white bold (speech)
+// Char colors for bubbles
+const CHAR_COLORS=["#f5c500","#6ecfa8","#7dd3fc","#f87171","#cc99ff","#ffa94d","#a9e34b","#f783ac","#74c0fc","#63e6be"];
+
 function parseLine(line){
   const t=line.trimStart();
   if(!t) return {type:"empty",content:line};
@@ -43,30 +49,28 @@ function parseLine(line){
   if(t[0]==="$") return {type:"item",   color:LC.item,    content:line, italic:false, bold:false};
   if(t[0]==="#") return {type:"phone",  color:LC.phone,   content:line, italic:false, bold:false};
   if(t[0]==="!") return {type:"system", color:LC.system,  content:line, italic:false, bold:true};
-  if(t.startsWith("((")) return {type:"ooc", color:LC.ooc,content:line, italic:true,  bold:false};
-  return {type:"default", color:LC.default, content:line, italic:false, bold:true};
+  if(t.startsWith("((")) return {type:"ooc",color:LC.ooc, content:line, italic:true,  bold:false};
+  return {type:"default",color:LC.default,content:line,italic:false,bold:true};
 }
 
 const DEFAULT_TEXT=`* Marcus Webb encosta o carro devagar no beco escuro, apagando os faróis antes de parar.
 Marcus Webb diz (normal): Desce aqui, sem chamar atenção.
-* Ele sai do veículo, ajustando o capuz e olhando pros dois lados da rua.
+* Marcus Webb sai do veículo, ajustando o capuz e olhando pros dois lados da rua.
 ! Você recebeu $2,500 de Marcus Webb.
 Danny Reeves diz (normal): Tá bom... mas se der errado, eu nunca estive aqui.
 * Danny Reeves puxa o zíper do casaco até o queixo e some na escuridão do beco.`;
 
 const LEGEND=[
-  {prefix:"*", label:"/me e /do — ações",   color:LC.action },
-  {prefix:"$", label:"itens entregues",      color:LC.item   },
-  {prefix:"#", label:"ligações celulares",   color:LC.phone  },
-  {prefix:"!", label:"mensagens do sistema", color:LC.system },
-  {prefix:"((", label:"OOC",                 color:LC.ooc    },
-  {prefix:"—", label:"fala normal",          color:LC.default},
+  {prefix:"*",  label:"/me (com nome) e /do (sem nome)", color:LC.action},
+  {prefix:"$",  label:"itens entregues",                 color:LC.item  },
+  {prefix:"#",  label:"ligações celulares",              color:LC.phone },
+  {prefix:"!",  label:"mensagens do sistema",            color:LC.system},
+  {prefix:"((", label:"OOC",                             color:LC.ooc   },
+  {prefix:"—",  label:"fala normal",                     color:LC.default},
 ];
 
-// ── Core canvas renderer ──────────────────────────────────────────────────────
-// textX, textY = top-left of text block as fraction of canvas (0..1)
-function renderToCanvas(ctx, W, H, {bgImg, overlay, lines, textXpct, textYpct, maxWpct, fontPx, bgEnabled, bgColor, bgOpacity}){
-  // Background
+// ── Renderer ──────────────────────────────────────────────────────────────────
+function renderToCanvas(ctx,W,H,{bgImg,overlay,lines,textXpct,textYpct,maxWpct,fontPx,bgEnabled,bgColor,bgOpacity}){
   if(bgImg){
     ctx.drawImage(bgImg,0,0,W,H);
     if(overlay>0){ctx.fillStyle=`rgba(12,17,26,${overlay/100})`;ctx.fillRect(0,0,W,H);}
@@ -74,13 +78,12 @@ function renderToCanvas(ctx, W, H, {bgImg, overlay, lines, textXpct, textYpct, m
     ctx.fillStyle="#0f1623";ctx.fillRect(0,0,W,H);
   }
 
-  const maxTextW = W*(maxWpct/100);
-  const lineH = fontPx*1.45;  // tight like GTA chat
-  const PAD = fontPx*0.55;
+  const maxTextW=W*(maxWpct/100);
+  const lineH=fontPx*1.45;
+  const PAD=fontPx*0.55;
 
-  // Word wrap
   const wrapLine=(line)=>{
-    const font=`${line.bold?"bold ":""}${line.italic?"italic ":""}${fontPx}px Arial, sans-serif`;
+    const font=`${line.bold?"bold ":""}${line.italic?"italic ":""}${fontPx}px Arial,sans-serif`;
     ctx.font=font;
     const words=line.content.split(" ");
     const rows=[];let cur="";
@@ -99,10 +102,9 @@ function renderToCanvas(ctx, W, H, {bgImg, overlay, lines, textXpct, textYpct, m
     wrapLine(line).forEach(r=>allRows.push(r));
   });
 
-  const startX = W*textXpct;
-  const startY = H*textYpct;
+  const startX=W*textXpct;
+  const startY=H*textYpct;
 
-  // Draw background box if enabled
   if(bgEnabled){
     const blockW=maxTextW+PAD*2;
     const blockH=allRows.reduce((a,r)=>a+(r.empty?lineH*0.4:lineH),0)+PAD*2;
@@ -110,20 +112,18 @@ function renderToCanvas(ctx, W, H, {bgImg, overlay, lines, textXpct, textYpct, m
     const r2=parseInt(hex.slice(1,3),16),g2=parseInt(hex.slice(3,5),16),b2=parseInt(hex.slice(5,7),16);
     ctx.fillStyle=`rgba(${r2},${g2},${b2},${(bgOpacity||50)/100})`;
     ctx.beginPath();
-    ctx.roundRect(startX-PAD, startY-PAD, blockW, blockH, fontPx*0.25);
+    ctx.roundRect(startX-PAD,startY-PAD,blockW,blockH,fontPx*0.25);
     ctx.fill();
   }
 
-  // Draw text — soft shadow like GTA, no heavy stroke
   let y=startY+fontPx;
   allRows.forEach(row=>{
     if(row.empty){y+=lineH*0.4;return;}
-    const font=`${row.line.bold?"bold ":""}${row.line.italic?"italic ":""}${fontPx}px Arial, sans-serif`;
+    const font=`${row.line.bold?"bold ":""}${row.line.italic?"italic ":""}${fontPx}px Arial,sans-serif`;
     ctx.font=font;
-    // subtle 1px black outline, clean like GTA
     ctx.fillStyle="rgba(0,0,0,0.85)";
     for(const [dx,dy] of [[-1,0],[1,0],[0,-1],[0,1]]){
-      ctx.fillText(row.text, startX+dx, y+dy);
+      ctx.fillText(row.text,startX+dx,y+dy);
     }
     ctx.fillStyle=row.line.color;
     ctx.fillText(row.text,startX,y);
@@ -131,10 +131,7 @@ function renderToCanvas(ctx, W, H, {bgImg, overlay, lines, textXpct, textYpct, m
   });
 }
 
-// ── UI Helpers ────────────────────────────────────────────────────────────────
-const sBtn={borderRadius:5,width:26,height:26,cursor:"pointer",fontSize:13,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0,background:"#0a0f17",border:"1px solid #ffffff12",color:"#6b7a8d"};
-const oBtn={borderRadius:6,padding:"8px 12px",fontSize:10,letterSpacing:1.5,cursor:"pointer",fontWeight:700,background:"transparent",border:"1px solid",transition:"all .15s"};
-
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function Block({label,children}){
   return(
     <div>
@@ -158,26 +155,31 @@ function Slider({label,value,min,max,onChange,unit=""}){
     </div>
   );
 }
+const sBtn={borderRadius:5,width:26,height:26,cursor:"pointer",fontSize:13,fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0,background:"#0a0f17",border:"1px solid #ffffff12",color:"#6b7a8d"};
 
-// ── Main App ──────────────────────────────────────────────────────────────────
+// ── App ───────────────────────────────────────────────────────────────────────
 function App(){
-  const [tab,setTab]=useState("single"); // "single" | "batch"
+  const [tab,setTab]=useState("single");
   const [input,setInput]=useState(DEFAULT_TEXT);
 
-  // Single image
+  // Characters
+  const [chars,setChars]=useState([
+    {id:1,name:"Marcus Webb",  color:CHAR_COLORS[0]},
+    {id:2,name:"Danny Reeves", color:CHAR_COLORS[1]},
+  ]);
+  const [activeChar,setActiveChar]=useState(1);
+  const [newName,setNewName]=useState("");
+
+  // Images
   const [singleImg,setSingleImg]=useState(null);
   const [singleEl,setSingleEl]=useState(null);
   const [singleSize,setSingleSize]=useState({w:1280,h:720});
+  const [batchImgs,setBatchImgs]=useState([]);
+  const [batchSel,setBatchSel]=useState(0);
 
-  // Batch images
-  const [batchImgs,setBatchImgs]=useState([]); // [{id,src,el,w,h,name}]
-  const [batchSel,setBatchSel]=useState(0); // index of selected for preview
-
-  // Text position (fraction 0..1)
+  // Position & style
   const [textX,setTextX]=useState(0.025);
   const [textY,setTextY]=useState(0.72);
-
-  // Style
   const [overlay,setOverlay]=useState(0);
   const [fontSize,setFontSize]=useState(20);
   const [maxW,setMaxW]=useState(65);
@@ -185,24 +187,82 @@ function App(){
   const [bgColor,setBgColor]=useState("#000000");
   const [bgOpacity,setBgOpacity]=useState(50);
 
-  const [draggingText,setDraggingText]=useState(false);
+  const [dragging,setDragging]=useState(false);
   const [exporting,setExporting]=useState(false);
-  const [exportProgress,setExportProgress]=useState(0);
+  const [exportPct,setExportPct]=useState(0);
 
   const fileRef=useRef(null);
   const batchFileRef=useRef(null);
   const previewRef=useRef(null);
   const wrapRef=useRef(null);
-  const dragStart=useRef(null); // {mouseX,mouseY,textX,textY}
+  const textareaRef=useRef(null);
+  const dragStart=useRef(null);
 
   const lines=input.split("\n").map(parseLine);
+  const activeImg=tab==="single"?singleEl:(batchImgs[batchSel]?.el||null);
+  const activeSize=tab==="single"?singleSize:(batchImgs[batchSel]?{w:batchImgs[batchSel].w,h:batchImgs[batchSel].h}:{w:1280,h:720});
+  const fontPx=(w)=>Math.round(fontSize*(w/1280));
 
-  // active image for preview
-  const activeImg = tab==="single" ? singleEl : (batchImgs[batchSel]?.el||null);
-  const activeSize = tab==="single" ? singleSize : (batchImgs[batchSel] ? {w:batchImgs[batchSel].w,h:batchImgs[batchSel].h} : {w:1280,h:720});
+  // ── Insert text at cursor ─────────────────────────────────────────────────
+  const insertAtCursor=(prefix)=>{
+    const ta=textareaRef.current;
+    if(!ta) return;
+    const start=ta.selectionStart;
+    const end=ta.selectionEnd;
+    const val=input;
+    // go to start of current line
+    const lineStart=val.lastIndexOf("\n",start-1)+1;
+    const before=val.slice(0,lineStart);
+    const after=val.slice(lineStart);
+    // add newline before if not at start
+    const needNL=lineStart>0&&val[lineStart-1]!=="\n";
+    const insertion=(needNL?"\n":"")+prefix;
+    const newVal=before+insertion+after;
+    setInput(newVal);
+    setTimeout(()=>{
+      ta.focus();
+      const pos=lineStart+(needNL?1:0)+prefix.length;
+      ta.setSelectionRange(pos,pos);
+    },0);
+  };
 
-  // ── Load image helper ────────────────────────────────────────────────────────
-  const loadImgFile=(file,cb)=>{
+  const getActiveCharName=()=>{
+    const c=chars.find(c=>c.id===activeChar);
+    return c?c.name:"";
+  };
+
+  const insertFala=()=>{
+    const name=getActiveCharName();
+    insertAtCursor(name?`${name} diz (normal): `:"");
+  };
+  const insertMe=()=>{
+    const name=getActiveCharName();
+    insertAtCursor(name?`* ${name} `:"* ");
+  };
+  const insertDo=()=>{
+    insertAtCursor("* ");
+  };
+  const insertItem=()=>insertAtCursor("$ ");
+  const insertPhone=()=>insertAtCursor("# ");
+  const insertSystem=()=>insertAtCursor("! ");
+  const insertOoc=()=>insertAtCursor("(( ");
+
+  // ── Add/remove characters ─────────────────────────────────────────────────
+  const addChar=()=>{
+    if(!newName.trim()) return;
+    const id=Date.now();
+    const color=CHAR_COLORS[chars.length%CHAR_COLORS.length];
+    setChars(prev=>[...prev,{id,name:newName.trim(),color}]);
+    setActiveChar(id);
+    setNewName("");
+  };
+  const removeChar=(id)=>{
+    setChars(prev=>prev.filter(c=>c.id!==id));
+    if(activeChar===id) setActiveChar(chars.find(c=>c.id!==id)?.id||null);
+  };
+
+  // ── Image loading ─────────────────────────────────────────────────────────
+  const loadImg=(file,cb)=>{
     if(!file?.type.startsWith("image/")) return;
     const r=new FileReader();
     r.onload=e=>{
@@ -213,242 +273,212 @@ function App(){
     };
     r.readAsDataURL(file);
   };
+  const handleSingle=f=>loadImg(f,({src,el,w,h})=>{setSingleImg(src);setSingleEl(el);setSingleSize({w,h});});
+  const handleBatch=files=>Array.from(files).forEach(f=>loadImg(f,d=>setBatchImgs(p=>[...p,{id:Date.now()+Math.random(),...d}])));
 
-  const handleSingleFile=(file)=>loadImgFile(file,({src,el,w,h})=>{setSingleImg(src);setSingleEl(el);setSingleSize({w,h});});
-  const handleBatchFiles=(files)=>{
-    Array.from(files).forEach(file=>{
-      loadImgFile(file,data=>{
-        setBatchImgs(prev=>[...prev,{id:Date.now()+Math.random(),...data}]);
-      });
-    });
-  };
-
-  // ── Draw preview ─────────────────────────────────────────────────────────────
+  // ── Draw preview ──────────────────────────────────────────────────────────
   const drawPreview=useCallback(()=>{
-    const canvas=previewRef.current;
-    const wrap=wrapRef.current;
+    const canvas=previewRef.current,wrap=wrapRef.current;
     if(!canvas||!wrap) return;
     const PW=wrap.offsetWidth;
     const PH=Math.round(PW*(activeSize.h/activeSize.w));
-    canvas.width=PW; canvas.height=PH;
-    const ctx=canvas.getContext("2d");
-    const scaledFont=fontPx(PW);
-    renderToCanvas(ctx,PW,PH,{bgImg:activeImg,overlay,lines,textXpct:textX,textYpct:textY,maxWpct:maxW,fontPx:scaledFont,bgEnabled,bgColor,bgOpacity});
+    canvas.width=PW;canvas.height=PH;
+    renderToCanvas(canvas.getContext("2d"),PW,PH,{bgImg:activeImg,overlay,lines,textXpct:textX,textYpct:textY,maxWpct:maxW,fontPx:fontPx(PW),bgEnabled,bgColor,bgOpacity});
   },[activeImg,activeSize,overlay,lines,textX,textY,maxW,fontSize,bgEnabled,bgColor,bgOpacity]);
 
   useEffect(()=>{drawPreview();},[drawPreview]);
-
   useEffect(()=>{
-    const wrap=wrapRef.current; if(!wrap) return;
+    const wrap=wrapRef.current;if(!wrap)return;
     const ro=new ResizeObserver(()=>drawPreview());
-    ro.observe(wrap);
-    return()=>ro.disconnect();
+    ro.observe(wrap);return()=>ro.disconnect();
   },[drawPreview]);
 
-  // font scaled to canvas width vs reference 1280px
-  const fontPx=(canvasW)=>Math.round(fontSize*(canvasW/1280));
-
-  // ── Drag text position ────────────────────────────────────────────────────────
-  const onMouseDown=(e)=>{
+  // ── Drag text ─────────────────────────────────────────────────────────────
+  const onMouseDown=e=>{
     e.preventDefault();
-    setDraggingText(true);
+    setDragging(true);
     dragStart.current={mx:e.clientX,my:e.clientY,tx:textX,ty:textY};
   };
   useEffect(()=>{
-    const onMove=(e)=>{
-      if(!draggingText) return;
-      const canvas=previewRef.current; if(!canvas) return;
+    const onMove=e=>{
+      if(!dragging) return;
+      const canvas=previewRef.current;if(!canvas)return;
       const {mx,my,tx,ty}=dragStart.current;
       const rect=canvas.getBoundingClientRect();
-      const dx=(e.clientX-mx)/rect.width;
-      const dy=(e.clientY-my)/rect.height;
-      setTextX(Math.min(0.95,Math.max(0,tx+dx)));
-      setTextY(Math.min(0.95,Math.max(0,ty+dy)));
+      setTextX(v=>Math.min(0.95,Math.max(0,tx+(e.clientX-mx)/rect.width)));
+      setTextY(v=>Math.min(0.95,Math.max(0,ty+(e.clientY-my)/rect.height)));
     };
-    const onUp=()=>setDraggingText(false);
+    const onUp=()=>setDragging(false);
     window.addEventListener("mousemove",onMove);
     window.addEventListener("mouseup",onUp);
     return()=>{window.removeEventListener("mousemove",onMove);window.removeEventListener("mouseup",onUp);};
-  },[draggingText]);
+  },[dragging]);
 
-  // touch support
-  useEffect(()=>{
-    const canvas=previewRef.current; if(!canvas) return;
-    const onTouchStart=(e)=>{
-      const t=e.touches[0];
-      setDraggingText(true);
-      dragStart.current={mx:t.clientX,my:t.clientY,tx:textX,ty:textY};
-    };
-    const onTouchMove=(e)=>{
-      if(!draggingText) return;
-      e.preventDefault();
-      const t=e.touches[0];
-      const {mx,my,tx,ty}=dragStart.current;
-      const rect=canvas.getBoundingClientRect();
-      setTextX(Math.min(0.95,Math.max(0,tx+(t.clientX-mx)/rect.width)));
-      setTextY(Math.min(0.95,Math.max(0,ty+(t.clientY-my)/rect.height)));
-    };
-    const onTouchEnd=()=>setDraggingText(false);
-    canvas.addEventListener("touchstart",onTouchStart,{passive:false});
-    canvas.addEventListener("touchmove",onTouchMove,{passive:false});
-    canvas.addEventListener("touchend",onTouchEnd);
-    return()=>{
-      canvas.removeEventListener("touchstart",onTouchStart);
-      canvas.removeEventListener("touchmove",onTouchMove);
-      canvas.removeEventListener("touchend",onTouchEnd);
-    };
-  },[draggingText,textX,textY]);
-
-  // ── Export single ─────────────────────────────────────────────────────────────
+  // ── Export ────────────────────────────────────────────────────────────────
   const exportSingle=()=>{
     const EW=singleSize.w,EH=singleSize.h;
-    const canvas=document.createElement("canvas");
-    canvas.width=EW;canvas.height=EH;
-    const ctx=canvas.getContext("2d");
-    renderToCanvas(ctx,EW,EH,{bgImg:singleEl,overlay,lines,textXpct:textX,textYpct:textY,maxWpct:maxW,fontPx:fontPx(EW),bgEnabled,bgColor,bgOpacity});
-    canvas.toBlob(blob=>{
-      const url=URL.createObjectURL(blob);
-      const a=document.createElement("a");
-      a.href=url;a.download="chatlog_chicago.png";a.click();
-      URL.revokeObjectURL(url);
-    },"image/png");
+    const c=document.createElement("canvas");c.width=EW;c.height=EH;
+    renderToCanvas(c.getContext("2d"),EW,EH,{bgImg:singleEl,overlay,lines,textXpct:textX,textYpct:textY,maxWpct:maxW,fontPx:fontPx(EW),bgEnabled,bgColor,bgOpacity});
+    c.toBlob(blob=>{const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="chatlog_chicago.png";a.click();URL.revokeObjectURL(url);},"image/png");
   };
-
-  // ── Export batch as ZIP ───────────────────────────────────────────────────────
   const exportBatch=async()=>{
     if(!batchImgs.length) return;
-    setExporting(true);setExportProgress(0);
+    setExporting(true);setExportPct(0);
     const zip=new JSZip();
     for(let i=0;i<batchImgs.length;i++){
       const img=batchImgs[i];
-      const EW=img.w,EH=img.h;
-      const canvas=document.createElement("canvas");
-      canvas.width=EW;canvas.height=EH;
-      const ctx=canvas.getContext("2d");
-      renderToCanvas(ctx,EW,EH,{bgImg:img.el,overlay,lines,textXpct:textX,textYpct:textY,maxWpct:maxW,fontPx:fontPx(EW),bgEnabled,bgColor,bgOpacity});
-      const blob=await new Promise(res=>canvas.toBlob(res,"image/png"));
-      const name=img.name.replace(/\.[^/.]+$/,"")+`_chatlog.png`;
-      zip.file(name,blob);
-      setExportProgress(Math.round(((i+1)/batchImgs.length)*100));
+      const c=document.createElement("canvas");c.width=img.w;c.height=img.h;
+      renderToCanvas(c.getContext("2d"),img.w,img.h,{bgImg:img.el,overlay,lines,textXpct:textX,textYpct:textY,maxWpct:maxW,fontPx:fontPx(img.w),bgEnabled,bgColor,bgOpacity});
+      const blob=await new Promise(res=>c.toBlob(res,"image/png"));
+      zip.file(img.name.replace(/\.[^/.]+$/,"")+`_chatlog.png`,blob);
+      setExportPct(Math.round(((i+1)/batchImgs.length)*100));
     }
-    const zipBlob=await zip.generateAsync({type:"blob"});
-    const url=URL.createObjectURL(zipBlob);
-    const a=document.createElement("a");
-    a.href=url;a.download="chatlogs_chicago.zip";a.click();
-    URL.revokeObjectURL(url);
-    setExporting(false);setExportProgress(0);
+    const zb=await zip.generateAsync({type:"blob"});
+    const url=URL.createObjectURL(zb);const a=document.createElement("a");a.href=url;a.download="chatlogs_chicago.zip";a.click();URL.revokeObjectURL(url);
+    setExporting(false);setExportPct(0);
   };
 
-  const removeBatchImg=(id)=>setBatchImgs(prev=>prev.filter(i=>i.id!==id));
-
   return(
-    <div style={{minHeight:"100vh",background:C.bg,color:C.text,display:"flex",flexDirection:"column",alignItems:"center"}}>
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column",alignItems:"center"}}>
 
       {/* HEADER */}
       <header style={{width:"100%",background:C.navy,borderBottom:`2px solid ${C.yellow}`,padding:"0 28px",boxSizing:"border-box",display:"flex",alignItems:"center",gap:14,height:56}}>
         <div style={{background:C.yellow,borderRadius:7,width:36,height:36,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:13,color:C.navy,fontFamily:"'Arial Black',sans-serif",boxShadow:`0 0 14px ${C.yellow}44`}}>CT</div>
         <div>
           <div style={{fontFamily:"'Arial Black',sans-serif",fontSize:15,fontWeight:900,letterSpacing:3,color:C.yellow,lineHeight:1.1}}>
-            CHICAGO <span style={{color:"#ffffff44",fontWeight:400,fontSize:10,letterSpacing:2,fontFamily:"sans-serif"}}>Tools RP</span>
+            CHICAGO <span style={{color:"#ffffff33",fontWeight:400,fontSize:10,letterSpacing:2,fontFamily:"sans-serif"}}>Tools RP</span>
           </div>
           <div style={{fontSize:8,color:C.muted,letterSpacing:4}}>CHAT LOG CREATOR</div>
         </div>
         <div style={{flex:1,height:1,background:`linear-gradient(90deg,${C.yellow}35,transparent)`,marginLeft:8}}/>
       </header>
 
-      <main style={{width:"100%",maxWidth:1080,padding:"20px 18px",boxSizing:"border-box"}}>
-        <div style={{display:"grid",gridTemplateColumns:"290px 1fr",gap:18}}>
+      <main style={{width:"100%",maxWidth:1080,padding:"18px",boxSizing:"border-box"}}>
+        <div style={{display:"grid",gridTemplateColumns:"300px 1fr",gap:18}}>
 
           {/* ── LEFT ── */}
           <div style={{display:"flex",flexDirection:"column",gap:11}}>
 
             {/* Tabs */}
-            <div style={{display:"flex",borderBottom:`1px solid #ffffff0c`,marginBottom:2}}>
-              <button className={`tab ${tab==="single"?"active":"inactive"}`} onClick={()=>setTab("single")}>UMA IMAGEM</button>
-              <button className={`tab ${tab==="batch"?"active":"inactive"}`} onClick={()=>setTab("batch")}>LOTE (ZIP)</button>
+            <div style={{display:"flex",borderBottom:"1px solid #ffffff0c"}}>
+              <button className={`tab ${tab==="single"?"active":""}`} onClick={()=>setTab("single")}>UMA IMAGEM</button>
+              <button className={`tab ${tab==="batch"?"active":""}`} onClick={()=>setTab("batch")}>LOTE (ZIP)</button>
             </div>
 
-            {/* Single image */}
-            {tab==="single"&&(
+            {/* Image input */}
+            {tab==="single"?(
               <Block label="FOTO DE FUNDO">
-                <div onClick={()=>fileRef.current?.click()}
-                  style={{border:`1.5px dashed ${singleImg?C.yellow+"44":"#ffffff15"}`,borderRadius:7,cursor:"pointer",overflow:"hidden",minHeight:singleImg?0:52,display:"flex",alignItems:"center",justifyContent:"center",background:"#00000020"}}>
-                  <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>handleSingleFile(e.target.files[0])}/>
+                <div onClick={()=>fileRef.current?.click()} style={{border:`1.5px dashed ${singleImg?C.yellow+"44":"#ffffff15"}`,borderRadius:7,cursor:"pointer",overflow:"hidden",minHeight:singleImg?0:52,display:"flex",alignItems:"center",justifyContent:"center",background:"#00000020"}}>
+                  <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>handleSingle(e.target.files[0])}/>
                   {singleImg?(
                     <div style={{position:"relative",width:"100%"}}>
-                      <img src={singleImg} alt="" style={{width:"100%",maxHeight:100,objectFit:"cover",display:"block"}}/>
-                      <div style={{position:"absolute",inset:0,background:"#000a",display:"flex",alignItems:"center",justifyContent:"center",opacity:0,transition:".15s"}}
-                        onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0}>
-                        <span style={{color:C.yellow,fontSize:10}}>TROCAR FOTO</span>
+                      <img src={singleImg} style={{width:"100%",maxHeight:90,objectFit:"cover",display:"block"}}/>
+                      <div style={{position:"absolute",inset:0,background:"#000a",display:"flex",alignItems:"center",justifyContent:"center",opacity:0,transition:".15s"}} onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0}>
+                        <span style={{color:C.yellow,fontSize:10}}>TROCAR</span>
                       </div>
                     </div>
-                  ):(
-                    <span style={{color:C.muted,fontSize:11}}>🖼 Clique para adicionar</span>
-                  )}
+                  ):<span style={{color:C.muted,fontSize:11}}>🖼 Clique para adicionar</span>}
                 </div>
                 {singleImg&&<div style={{marginTop:8}}><Slider label="ESCURECIMENTO" value={overlay} min={0} max={85} onChange={setOverlay} unit="%"/></div>}
               </Block>
-            )}
-
-            {/* Batch images */}
-            {tab==="batch"&&(
+            ):(
               <Block label="FOTOS EM LOTE">
-                <div onClick={()=>batchFileRef.current?.click()}
-                  style={{border:`1.5px dashed ${C.yellow}44`,borderRadius:7,cursor:"pointer",padding:"12px",textAlign:"center",background:"#00000020",marginBottom:batchImgs.length?10:0}}>
-                  <input ref={batchFileRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={e=>handleBatchFiles(e.target.files)}/>
+                <div onClick={()=>batchFileRef.current?.click()} style={{border:`1.5px dashed ${C.yellow}44`,borderRadius:7,cursor:"pointer",padding:"10px",textAlign:"center",background:"#00000020",marginBottom:batchImgs.length?10:0}}>
+                  <input ref={batchFileRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={e=>handleBatch(e.target.files)}/>
                   <span style={{color:C.yellow,fontSize:11}}>+ Adicionar fotos</span>
                 </div>
                 {batchImgs.length>0&&(
-                  <div style={{display:"flex",flexWrap:"wrap",gap:6,maxHeight:160,overflowY:"auto"}}>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:5,maxHeight:130,overflowY:"auto",marginBottom:8}}>
                     {batchImgs.map((img,i)=>(
-                      <div key={img.id} className={`img-thumb ${batchSel===i?"selected":""}`} style={{width:68,height:48}} onClick={()=>setBatchSel(i)}>
-                        <img src={img.src} alt="" style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
-                        <button className="remove-btn" onClick={e=>{e.stopPropagation();removeBatchImg(img.id);if(batchSel>=i&&batchSel>0)setBatchSel(batchSel-1);}}>✕</button>
+                      <div key={img.id} className={`img-thumb ${batchSel===i?"selected":""}`} style={{width:62,height:44}} onClick={()=>setBatchSel(i)}>
+                        <img src={img.src} style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+                        <button className="rm" onClick={e=>{e.stopPropagation();setBatchImgs(p=>p.filter(x=>x.id!==img.id));if(batchSel>=i&&batchSel>0)setBatchSel(batchSel-1);}}>✕</button>
                       </div>
                     ))}
                   </div>
                 )}
-                {batchImgs.length>0&&<div style={{marginTop:8}}><Slider label="ESCURECIMENTO" value={overlay} min={0} max={85} onChange={setOverlay} unit="%"/></div>}
+                {batchImgs.length>0&&<Slider label="ESCURECIMENTO" value={overlay} min={0} max={85} onChange={setOverlay} unit="%"/>}
               </Block>
             )}
 
-            {/* Text */}
-            <Block label="TEXTO DO CHAT LOG">
-              <textarea value={input} onChange={e=>setInput(e.target.value)}
-                placeholder={"* Ação\n$ Item\n# Celular\n! Sistema\nFala normal"}
-                style={{width:"100%",height:170,background:"#0a0f17",border:"1px solid #ffffff0c",borderRadius:6,color:"#c8d0dc",fontFamily:"'Courier New',monospace",fontSize:12,lineHeight:1.7,padding:"9px 11px",resize:"vertical",outline:"none",boxSizing:"border-box"}}/>
+            {/* ── CHARACTERS ── */}
+            <Block label="PERSONAGENS">
+              {/* Add character */}
+              <div style={{display:"flex",gap:6,marginBottom:10}}>
+                <input value={newName} onChange={e=>setNewName(e.target.value)}
+                  onKeyDown={e=>e.key==="Enter"&&addChar()}
+                  placeholder="Nome do personagem"
+                  style={{flex:1,background:"#0a0f17",border:"1px solid #ffffff0c",borderRadius:6,color:"#c8d0dc",fontSize:11,padding:"6px 10px",outline:"none"}}/>
+                <button onClick={addChar} disabled={!newName.trim()}
+                  style={{background:newName.trim()?C.yellow:"#1a2030",color:newName.trim()?C.navy:"#3d4a5c",border:"none",borderRadius:6,padding:"6px 12px",fontSize:11,fontWeight:700,cursor:newName.trim()?"pointer":"default",flexShrink:0}}>
+                  + ADD
+                </button>
+              </div>
+
+              {/* Character bubbles */}
+              {chars.length===0&&<div style={{color:"#2a3a50",fontSize:11,textAlign:"center",padding:"8px 0"}}>Nenhum personagem adicionado</div>}
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:chars.length?10:0}}>
+                {chars.map(c=>(
+                  <div key={c.id} className={`char-bubble ${activeChar===c.id?"active":""}`}
+                    style={{background:c.color+"22",borderColor:activeChar===c.id?c.color+"88":"transparent"}}
+                    onClick={()=>setActiveChar(c.id)}>
+                    <div style={{width:8,height:8,borderRadius:"50%",background:c.color,flexShrink:0}}/>
+                    <span style={{color:c.color}}>{c.name}</span>
+                    <button onClick={e=>{e.stopPropagation();removeChar(c.id);}} style={{background:"transparent",border:"none",color:c.color+"88",cursor:"pointer",fontSize:10,padding:"0 0 0 2px",lineHeight:1}}>✕</button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Quick insert buttons */}
+              {chars.length>0&&(
+                <div>
+                  <div style={{fontSize:9,color:"#3d4a5c",letterSpacing:2,marginBottom:6}}>INSERIR NO TEXTO</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                    <button className="action-btn fala" onClick={insertFala} title="Fala normal com nome do personagem">💬 FALA</button>
+                    <button className="action-btn me"   onClick={insertMe}  title="/me — ação com nome do personagem">★ /ME</button>
+                    <button className="action-btn do"   onClick={insertDo}  title="/do — ação de cena sem nome">◈ /DO</button>
+                    <button className="action-btn" style={{borderColor:"#6ecfa844",color:"#6ecfa8"}} onClick={insertItem}  title="Item entregue">$ ITEM</button>
+                    <button className="action-btn" style={{borderColor:"#7dd3fc44",color:"#7dd3fc"}} onClick={insertPhone} title="Ligação celular"># CEL</button>
+                    <button className="action-btn" style={{borderColor:"#f8717144",color:"#f87171"}} onClick={insertSystem} title="Mensagem sistema">! SIS</button>
+                    <button className="action-btn" style={{borderColor:"#94a3b844",color:"#94a3b8"}} onClick={insertOoc}   title="OOC">(( OOC</button>
+                  </div>
+                  <div style={{fontSize:9,color:"#2a3a50",marginTop:7}}>
+                    Personagem ativo: <span style={{color:chars.find(c=>c.id===activeChar)?.color||"#555",fontWeight:700}}>{chars.find(c=>c.id===activeChar)?.name||"—"}</span>
+                  </div>
+                </div>
+              )}
             </Block>
 
-            {/* Style controls */}
-            <Block label="ESTILO DO TEXTO">
-              <div style={{display:"flex",flexDirection:"column",gap:11}}>
+            {/* Textarea */}
+            <Block label="TEXTO DO CHAT LOG">
+              <textarea ref={textareaRef} value={input} onChange={e=>setInput(e.target.value)}
+                placeholder={"Clique nos botões acima para inserir linhas\nou escreva diretamente aqui..."}
+                style={{width:"100%",height:160,background:"#0a0f17",border:"1px solid #ffffff0c",borderRadius:6,color:"#c8d0dc",fontFamily:"'Courier New',monospace",fontSize:11.5,lineHeight:1.7,padding:"9px 11px",resize:"vertical",outline:"none",boxSizing:"border-box"}}/>
+            </Block>
+
+            {/* Style */}
+            <Block label="ESTILO">
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
                 <div style={{display:"flex",alignItems:"center",gap:7}}>
                   <button onClick={()=>setFontSize(s=>Math.max(8,s-1))} style={sBtn}>−</button>
                   <Slider label="TAMANHO DA FONTE" value={fontSize} min={8} max={40} onChange={setFontSize} unit="px"/>
                   <button onClick={()=>setFontSize(s=>Math.min(40,s+1))} style={sBtn}>+</button>
                 </div>
                 <Slider label="LARGURA DO BLOCO" value={maxW} min={15} max={95} onChange={setMaxW} unit="%"/>
-                {/* Background option */}
                 <div>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:bgEnabled?8:0}}>
                     <span style={{fontSize:9,letterSpacing:2,color:"#3d4a5c"}}>FUNDO DO TEXTO</span>
-                    <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                    <label style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer"}}>
                       <input type="checkbox" checked={bgEnabled} onChange={e=>setBgEnabled(e.target.checked)} style={{accentColor:C.yellow}}/>
-                      <span style={{fontSize:9,color:bgEnabled?C.yellow:C.muted}}>ATIVADO</span>
+                      <span style={{fontSize:9,color:bgEnabled?C.yellow:C.muted}}>ATIVO</span>
                     </label>
                   </div>
                   {bgEnabled&&(
-                    <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                      <div style={{display:"flex",alignItems:"center",gap:8}}>
-                        <span style={{fontSize:9,color:"#3d4a5c",letterSpacing:2,whiteSpace:"nowrap"}}>COR</span>
-                        <input type="color" value={bgColor} onChange={e=>setBgColor(e.target.value)} style={{width:36,height:22,border:"none",background:"none",cursor:"pointer",borderRadius:4}}/>
-                        <div style={{flex:1}}><Slider label="OPACIDADE" value={bgOpacity} min={5} max={100} onChange={setBgOpacity} unit="%"/></div>
-                      </div>
+                    <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                      <input type="color" value={bgColor} onChange={e=>setBgColor(e.target.value)} style={{width:32,height:22,border:"none",background:"none",cursor:"pointer",borderRadius:3}}/>
+                      <div style={{flex:1}}><Slider label="OPACIDADE" value={bgOpacity} min={5} max={100} onChange={setBgOpacity} unit="%"/></div>
                     </div>
                   )}
-                </div>
-                <div style={{fontSize:9,color:"#3d4a5c",letterSpacing:1,textAlign:"center",paddingTop:2}}>
-                  🖱 Arraste o texto no preview para reposicionar
                 </div>
               </div>
             </Block>
@@ -456,16 +486,16 @@ function App(){
             {/* Actions */}
             <div style={{display:"flex",gap:7}}>
               <button onClick={()=>{setInput("");setSingleImg(null);setSingleEl(null);setBatchImgs([]);}}
-                style={{flex:1,...oBtn,color:"#f87171",borderColor:"#f8717130"}}>LIMPAR</button>
+                style={{flex:1,borderRadius:6,padding:"8px",fontSize:10,letterSpacing:1.5,cursor:"pointer",fontWeight:700,background:"transparent",border:"1px solid #f8717130",color:"#f87171"}}>LIMPAR</button>
               {tab==="single"?(
                 <button onClick={exportSingle} disabled={!singleImg}
-                  style={{flex:2.5,borderRadius:6,padding:"8px",fontSize:10,letterSpacing:1.5,cursor:singleImg?"pointer":"not-allowed",fontWeight:900,border:"none",background:singleImg?C.yellow:"#2a2a2a",color:singleImg?C.navy:"#555",fontFamily:"'Arial Black',sans-serif",boxShadow:singleImg?`0 3px 14px ${C.yellow}40`:"none"}}>
+                  style={{flex:2.5,borderRadius:6,padding:"8px",fontSize:10,letterSpacing:1.5,cursor:singleImg?"pointer":"not-allowed",fontWeight:900,border:"none",background:singleImg?C.yellow:"#1a2030",color:singleImg?C.navy:"#3d4a5c",fontFamily:"'Arial Black',sans-serif",boxShadow:singleImg?`0 3px 14px ${C.yellow}40`:"none"}}>
                   ↓ EXPORTAR PNG
                 </button>
               ):(
                 <button onClick={exportBatch} disabled={exporting||!batchImgs.length}
-                  style={{flex:2.5,borderRadius:6,padding:"8px",fontSize:10,letterSpacing:1.5,cursor:(batchImgs.length&&!exporting)?"pointer":"not-allowed",fontWeight:900,border:"none",background:(batchImgs.length&&!exporting)?C.yellow:"#2a2a2a",color:(batchImgs.length&&!exporting)?C.navy:"#555",fontFamily:"'Arial Black',sans-serif",transition:"all .2s"}}>
-                  {exporting?`⏳ ${exportProgress}%`:`↓ BAIXAR TUDO (${batchImgs.length}) ZIP`}
+                  style={{flex:2.5,borderRadius:6,padding:"8px",fontSize:10,letterSpacing:1,cursor:(batchImgs.length&&!exporting)?"pointer":"not-allowed",fontWeight:900,border:"none",background:(batchImgs.length&&!exporting)?C.yellow:"#1a2030",color:(batchImgs.length&&!exporting)?C.navy:"#3d4a5c",fontFamily:"'Arial Black',sans-serif"}}>
+                  {exporting?`⏳ ${exportPct}%`:`↓ ZIP (${batchImgs.length} fotos)`}
                 </button>
               )}
             </div>
@@ -487,27 +517,21 @@ function App(){
           <div>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
               <span style={{fontSize:9,letterSpacing:3,color:C.muted}}>PREVIEW</span>
-              <span style={{fontSize:9,color:"#2a3a50"}}>— arraste o texto para reposicionar</span>
+              <span style={{fontSize:9,color:"#1e2a3a"}}>— arraste o texto para reposicionar</span>
               <div style={{flex:1,height:1,background:`linear-gradient(90deg,${C.yellow}20,transparent)`}}/>
               <span style={{fontSize:9,color:C.muted}}>{activeSize.w}×{activeSize.h}px</span>
             </div>
             <div ref={wrapRef} style={{width:"100%",borderRadius:10,overflow:"hidden",border:`1px solid ${C.yellow}15`,boxShadow:"0 8px 36px #00000055",background:C.navy}}>
               <div style={{position:"relative",width:"100%",paddingTop:`${(activeSize.h/activeSize.w)*100}%`}}>
-                <canvas ref={previewRef}
-                  onMouseDown={onMouseDown}
-                  style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",display:"block",cursor:draggingText?"grabbing":"grab"}}/>
+                <canvas ref={previewRef} onMouseDown={onMouseDown}
+                  style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",display:"block",cursor:dragging?"grabbing":"grab"}}/>
               </div>
             </div>
-            {(tab==="single"&&!singleImg)||(tab==="batch"&&!batchImgs.length)?(
-              <div style={{marginTop:8,color:"#1e2a3a",fontSize:10,textAlign:"center"}}>
-                💡 Adicione {tab==="batch"?"as fotos":"uma foto"} de fundo para ver o resultado final
-              </div>
-            ):null}
           </div>
         </div>
       </main>
 
-      <footer style={{padding:"14px",color:C.muted,fontSize:8,letterSpacing:3,textAlign:"center",borderTop:`1px solid #ffffff06`,width:"100%",boxSizing:"border-box",marginTop:8}}>
+      <footer style={{padding:"14px",color:C.muted,fontSize:8,letterSpacing:3,textAlign:"center",borderTop:"1px solid #ffffff06",width:"100%",boxSizing:"border-box",marginTop:8}}>
         CHICAGO TOOLS RP · CHAT LOG CREATOR
       </footer>
     </div>
