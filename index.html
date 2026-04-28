@@ -8,7 +8,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/dom-to-image/2.6.0/dom-to-image.min.js"></script>
   <style>
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     body{background:#0c111a;font-family:'Chalet London','ChaletLondon','Arial',sans-serif;color:#cbd5e1}
@@ -26,30 +25,10 @@
     .char-bubble.active{border-color:rgba(255,255,255,0.4)}
     .action-btn{padding:5px 10px;border-radius:5px;border:1px solid #ffffff14;background:#0a0f17;color:#94a3b8;font-size:10px;font-weight:700;cursor:pointer;transition:all .15s;letter-spacing:1px}
     .action-btn:hover{background:#161f2e;color:#cbd5e1}
-    /* ── Chat line styles — matching chatlog-clean.com.br exactly ── */
-    .chat-wrap{display:inline-block;padding:4px 6px;line-height:1.45;font-family:'Chalet London','ChaletLondon','Arial',sans-serif}
-    .chat-line{display:block;white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.4;font-family:'Chalet London','ChaletLondon','Arial',sans-serif;font-weight:normal}
-    .chat-line.has-bg {text-shadow:none}
-    .chat-line.no-bg  {text-shadow:-1px 0 #000, 1px 0 #000, 0 -1px #000, 0 1px #000, -1px -1px #000, 1px -1px #000, -1px 1px #000, 1px 1px #000}
-    /* class names match their CSS class names */
-    .chat-line.white      {color:#ffffff}
-    .chat-line.me         {color:#cc99ff}   /* * actions */
-    .chat-line.ame        {color:#cc99ff}   /* > /ame */
-    .chat-line.yellow     {color:#f5c500}   /* celular, ! system */
-    .chat-line.green      {color:#6ecfa8}   /* $ itens */
-    .chat-line.death      {color:#f87171}   /* mortes, CK */
-    .chat-line.blue       {color:#7dd3fc}   /* info */
-    .chat-line.grey       {color:#aaaaaa}   /* baixo */
-    .chat-line.darkgrey   {color:#888888}   /* sussurrando */
-    .chat-line.lightgrey  {color:#cccccc}
-    .chat-line.ooc        {color:#94a3b8}   /* (( )) */
-    .chat-line.empty      {display:block;height:4px}
   </style>
 </head>
 <body>
 <div id="root"></div>
-<!-- Hidden render area for dom-to-image -->
-<div id="render-stage" style="position:fixed;top:-9999px;left:-9999px;pointer-events:none;"></div>
 
 <script type="text/babel">
 const {useState,useRef,useCallback,useEffect} = React;
@@ -68,8 +47,8 @@ function parseLine(line){
   // > /ame → purple (same color as me)
   if(t[0]===">") return {type:"ame", content:line};
 
-  // $ item → green
-  if(t[0]==="$") return {type:"green", content:line};
+  // $ item → yellow (GTA World system style)
+  if(t[0]==="$") return {type:"yellow", content:line};
 
   // ! system → yellow (they strip the ! and show yellow)
   if(t[0]==="!") return {type:"yellow", content:line.slice(1).trimStart()};
@@ -107,33 +86,155 @@ const LEGEND=[
   {type:"me",       prefix:"*",   label:"/me e /do — ações"},
   {type:"white",    prefix:"—",   label:"fala normal"},
   {type:"yellow",   prefix:"!",   label:"sistema / celular"},
-  {type:"green",    prefix:"$",   label:"itens entregues"},
+  {type:"yellow",   prefix:"$",   label:"itens entregues"},
   {type:"grey",     prefix:"—",   label:"diz (baixo)"},
   {type:"darkgrey", prefix:"—",   label:"diz (sussurrando)"},
   {type:"ooc",      prefix:"((",  label:"OOC"},
 ];
 
-// ── Build the HTML chat block ──────────────────────────────────────────────────
-function buildChatHTML(lines, fontSize, bgEnabled, bgColor, bgOpacity, maxWpx, shadowPx=1){
-  const bg = bgEnabled
-    ? (() => {
-        const r=parseInt(bgColor.slice(1,3),16),g=parseInt(bgColor.slice(3,5),16),b=parseInt(bgColor.slice(5,7),16);
-        return `rgba(${r},${g},${b},${bgOpacity/100})`;
-      })()
-    : "transparent";
+// ── Visual effects: applied on canvas during export and preview ─
+function generateNoiseCanvas(w, h, alpha=70){
+  const c=document.createElement("canvas");
+  c.width=w; c.height=h;
+  const ctx=c.getContext("2d");
+  const id=ctx.createImageData(w,h);
+  for(let i=0;i<id.data.length;i+=4){
+    const v=Math.random()*255;
+    id.data[i]=v; id.data[i+1]=v; id.data[i+2]=v; id.data[i+3]=alpha;
+  }
+  ctx.putImageData(id,0,0);
+  return c;
+}
+function applyCanvasFilter(canvas, filter){
+  const tmp=document.createElement("canvas");
+  tmp.width=canvas.width; tmp.height=canvas.height;
+  tmp.getContext("2d").drawImage(canvas,0,0);
+  const ctx=canvas.getContext("2d");
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.filter=filter;
+  ctx.drawImage(tmp,0,0);
+  ctx.filter="none";
+}
+function applyCanvasEffects(canvas, effects){
+  const ctx=canvas.getContext("2d");
+  const w=canvas.width, h=canvas.height;
+  const filters=[];
+  if(effects.bw)      filters.push("grayscale(1)");
+  if(effects.vintage) filters.push("sepia(0.7) saturate(1.3) contrast(1.05)");
+  if(effects.brush)   filters.push("contrast(1.25) saturate(1.2)");
+  if(filters.length)  applyCanvasFilter(canvas, filters.join(" "));
 
-  const s=shadowPx;
-  const shadow=bgEnabled?"none":`-${s}px 0 #000,${s}px 0 #000,0 -${s}px #000,0 ${s}px #000,-${s}px -${s}px #000,${s}px -${s}px #000,-${s}px ${s}px #000,${s}px ${s}px #000`;
+  if(effects.lightleak){
+    const grad=ctx.createLinearGradient(0,0,w,h);
+    grad.addColorStop(0,    "rgba(255,140,60,0.40)");
+    grad.addColorStop(0.45, "rgba(255,200,120,0.18)");
+    grad.addColorStop(1,    "rgba(255,80,40,0)");
+    ctx.save();
+    ctx.globalCompositeOperation="screen";
+    ctx.fillStyle=grad;
+    ctx.fillRect(0,0,w,h);
+    ctx.restore();
+  }
+  if(effects.vignette){
+    const grad=ctx.createRadialGradient(w/2,h/2,Math.min(w,h)*0.25, w/2,h/2,Math.max(w,h)*0.7);
+    grad.addColorStop(0,   "rgba(0,0,0,0)");
+    grad.addColorStop(0.7, "rgba(0,0,0,0.25)");
+    grad.addColorStop(1,   "rgba(0,0,0,0.75)");
+    ctx.fillStyle=grad;
+    ctx.fillRect(0,0,w,h);
+  }
+  if(effects.grain){
+    const noise=generateNoiseCanvas(Math.min(w,512), Math.min(h,512), 70);
+    ctx.save();
+    ctx.globalCompositeOperation="overlay";
+    ctx.fillStyle=ctx.createPattern(noise,"repeat");
+    ctx.fillRect(0,0,w,h);
+    ctx.restore();
+  }
+}
 
-  const linesHTML = lines.map(l => {
-    if(l.type==="empty") return `<span style="display:block;height:${Math.round(fontSize*0.3)}px"> </span>`;
-    const esc = l.content.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-    const colors={me:"#cc99ff",ame:"#cc99ff",white:"#ffffff",yellow:"#f5c500",green:"#6ecfa8",death:"#f87171",grey:"#aaaaaa",darkgrey:"#888888",lightgrey:"#cccccc",ooc:"#94a3b8",blue:"#7dd3fc"};
-    const color=colors[l.type]||"#ffffff";
-    return `<span style="display:block;white-space:pre-wrap;word-break:break-word;font-size:${fontSize}px;line-height:1.4;font-family:'Chalet London','ChaletLondon','Arial',sans-serif;color:${color};text-shadow:${shadow}">${esc}</span>`;
-  }).join("");
+// Render the canvas at 2× the image's native resolution. The text is drawn at
+// full 2× pixel density, which makes glyph edges visibly crisper when the user
+// zooms into the export PNG. Preview and export both use this same factor so
+// they stay pixel-perfect with each other.
+const RENDER_SCALE = 2;
 
-  return `<div style="display:inline-block;padding:${Math.round(fontSize*0.3)}px ${Math.round(fontSize*0.45)}px;background:${bg};border-radius:2px;font-family:'Chalet London','ChaletLondon','Arial',sans-serif;max-width:${maxWpx}px">${linesHTML}</div>`;
+// ── Native canvas text rendering — pixel-perfect, no SVG/foreignObject blur ──
+// Replaces dom-to-image for the export so the text comes out as crisp as the
+// browser can render it natively (preview-quality, but at full image resolution).
+function wrapText(ctx, text, maxWidth){
+  const words = text.split(' ');
+  const result = [];
+  let line = '';
+  for(let i=0; i<words.length; i++){
+    const test = line ? (line + ' ' + words[i]) : words[i];
+    if(ctx.measureText(test).width > maxWidth && line){
+      result.push(line);
+      line = words[i];
+    } else {
+      line = test;
+    }
+  }
+  if(line) result.push(line);
+  if(!result.length) result.push('');
+  return result;
+}
+
+function drawChatOnCanvas(ctx, lines, x, y, fontSize, bgEnabled, bgColor, bgOpacity, maxW, shadowPx){
+  const colors={me:"#cc99ff",ame:"#cc99ff",white:"#ffffff",yellow:"#f5c500",green:"#6ecfa8",death:"#f87171",grey:"#aaaaaa",darkgrey:"#888888",lightgrey:"#cccccc",ooc:"#94a3b8",blue:"#7dd3fc"};
+  const padX = Math.max(2, Math.round(fontSize*0.35));
+  const padY = Math.max(1, Math.round(fontSize*0.15));
+  const lineHeight = Math.round(fontSize*1.55);
+
+  ctx.font = `bold ${fontSize}px Arial, Helvetica, sans-serif`;
+  ctx.textBaseline = 'top';
+  ctx.lineJoin = 'round';
+  ctx.miterLimit = 2;
+
+  let bg = null;
+  if(bgEnabled){
+    const r=parseInt(bgColor.slice(1,3),16),
+          g=parseInt(bgColor.slice(3,5),16),
+          b=parseInt(bgColor.slice(5,7),16);
+    bg = `rgba(${r},${g},${b},${bgOpacity/100})`;
+  }
+
+  let cursorY = y;
+  const maxTextWidth = Math.max(20, maxW - 2*padX);
+
+  for(const line of lines){
+    if(line.type === 'empty'){
+      cursorY += lineHeight;
+      continue;
+    }
+    const color = colors[line.type] || '#ffffff';
+    const wrapped = wrapText(ctx, line.content, maxTextWidth);
+
+    for(const wLine of wrapped){
+      const tw = Math.ceil(ctx.measureText(wLine).width);
+
+      if(bg){
+        ctx.fillStyle = bg;
+        ctx.fillRect(x, cursorY, tw + 2*padX, lineHeight);
+      }
+
+      const tx = x + padX;
+      const ty = cursorY + padY;
+
+      // Outline thicker when there's no background — text needs to stand
+      // out against arbitrary image content. With bg enabled, a thin
+      // 1px-equivalent stroke matches the magician's text-shadow style.
+      const outlineMultiplier = bgEnabled ? 2 : 5;
+      ctx.lineWidth = shadowPx * outlineMultiplier;
+      ctx.strokeStyle = '#000';
+      ctx.strokeText(wLine, tx, ty);
+
+      ctx.fillStyle = color;
+      ctx.fillText(wLine, tx, ty);
+
+      cursorY += lineHeight;
+    }
+  }
 }
 
 function Block({label,children}){
@@ -188,17 +289,27 @@ function App(){
   const [bgColor,setBgColor]=useState("#000000");
   const [bgOpacity,setBgOpacity]=useState(85);
 
+  const [effects,setEffects]=useState({
+    grain:false, vignette:false, lightleak:false,
+    brush:false, vintage:false, bw:false,
+  });
+  const toggleEffect=(k)=>setEffects(p=>({...p,[k]:!p[k]}));
+  const cssFilter=[
+    effects.bw      && "grayscale(1)",
+    effects.vintage && "sepia(0.7) saturate(1.3) contrast(1.05)",
+    effects.brush   && "contrast(1.25) saturate(1.2)",
+  ].filter(Boolean).join(" ") || "none";
+
   const [dragging,setDragging]=useState(false);
   const [exporting,setExporting]=useState(false);
   const [exportPct,setExportPct]=useState(0);
 
   const fileRef=useRef(null);
   const batchFileRef=useRef(null);
-  const previewRef=useRef(null);   // the preview container div
+  const canvasRef=useRef(null);    // the preview canvas (drawn imperatively)
   const wrapRef=useRef(null);      // outer sizing div
   const textareaRef=useRef(null);
   const dragStart=useRef(null);
-  const chatNodeRef=useRef(null);  // the actual chat HTML node in preview
 
   const lines=input.split("\n").map(parseLine);
   const activeImg=tab==="single"?singleImg:(batchImgs[batchSel]?.src||null);
@@ -212,10 +323,9 @@ function App(){
     ro.observe(wrap); return()=>ro.disconnect();
   },[]);
 
-  const previewH=Math.round(previewW*(activeSize.h/activeSize.w));
-  // scale font for preview vs export
-  const previewFontSize=Math.round(fontSize*(previewW/activeSize.w));
-  const previewMaxW=Math.round(previewW*(maxWpct/100));
+  // The preview canvas is sized at the image's native resolution and
+  // visually scaled by CSS (width:100%) — preview = export, pixel-perfect.
+  const exportMaxWpx = Math.round(activeSize.w*(maxWpct/100));
 
   // ── Load image ─────────────────────────────────────────────────────────────
   const loadImg=(file,cb)=>{
@@ -284,54 +394,41 @@ function App(){
     if(activeChar===id) setActiveChar(chars.find(c=>c.id!==id)?.id||null);
   };
 
-  // ── Export: text overlay at preview size → composite onto full-res image ──────
+  // ── Export: render at 2× the image resolution for crisp text ──────
+  // Same draw routine as the preview, just saved as PNG. The output is 2× the
+  // input image dimensions which gives the text more pixels per glyph and
+  // keeps it sharp under zoom.
   const doExport=async(imgSrc,imgEl,imgW,imgH,filename)=>{
-    const PW = previewW;
-    const PH = previewH;
-
-    // 1. Build text-only HTML (transparent bg behind image, keep user bg box)
-    const chatHTML = buildChatHTML(lines, previewFontSize, bgEnabled, bgColor, bgOpacity, previewMaxW, 1);
-
-    // 2. Render text overlay on transparent container
-    const stage = document.getElementById("render-stage");
-    stage.innerHTML = "";
-    const container = document.createElement("div");
-    container.style.cssText = `width:${PW}px;height:${PH}px;position:relative;overflow:hidden;background:transparent;`;
-
-    // Dark overlay on top of photo if set
-    if(imgSrc && overlay>0){
-      const ov = document.createElement("div");
-      ov.style.cssText = `position:absolute;inset:0;background:rgba(12,17,26,${overlay/100});`;
-      container.appendChild(ov);
-    }
-
-    const textDiv = document.createElement("div");
-    textDiv.style.cssText = `position:absolute;left:${textX/100*PW}px;top:${textY/100*PH}px;`;
-    textDiv.innerHTML = chatHTML;
-    container.appendChild(textDiv);
-    stage.appendChild(container);
-
-    const overlayDataUrl = await domtoimage.toPng(container, {width:PW, height:PH});
-    stage.innerHTML = "";
-
-    // 3. Composite: draw full-res original image first, then scale overlay on top
+    const SS = RENDER_SCALE;
+    const W = imgW * SS, H = imgH * SS;
     const canvas = document.createElement("canvas");
-    canvas.width = imgW; canvas.height = imgH;
+    canvas.width = W; canvas.height = H;
     const ctx = canvas.getContext("2d");
 
+    // 1. Base image (upscaled with high-quality smoothing)
     if(imgEl){
-      ctx.drawImage(imgEl, 0, 0, imgW, imgH);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(imgEl, 0, 0, W, H);
     } else {
       ctx.fillStyle = "#0f1623";
-      ctx.fillRect(0, 0, imgW, imgH);
+      ctx.fillRect(0, 0, W, H);
     }
 
-    // Draw text overlay scaled to full res
-    const overlayImg = new Image();
-    await new Promise(res => { overlayImg.onload = res; overlayImg.src = overlayDataUrl; });
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(overlayImg, 0, 0, imgW, imgH);
+    // 2. Visual effects
+    applyCanvasEffects(canvas, effects);
+
+    // 3. Dark overlay (escurecimento)
+    if(imgSrc && overlay>0){
+      ctx.fillStyle = `rgba(12,17,26,${overlay/100})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    // 4. Chat text at 2× scale
+    const exportMaxW = Math.round((maxWpct/100) * W);
+    const tX = (textX/100) * W;
+    const tY = (textY/100) * H;
+    drawChatOnCanvas(ctx, lines, tX, tY, fontSize*SS, bgEnabled, bgColor, bgOpacity, exportMaxW, SS);
 
     const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
     const url = URL.createObjectURL(blob);
@@ -352,40 +449,35 @@ function App(){
     const zip = new JSZip();
     for(let i=0; i<batchImgs.length; i++){
       const img = batchImgs[i];
-      const bPH = Math.round(previewW*(img.h/img.w));
-      const chatHTML = buildChatHTML(lines, previewFontSize, bgEnabled, bgColor, bgOpacity, previewMaxW, 1);
-
-      const stage = document.getElementById("render-stage");
-      stage.innerHTML = "";
-      const container = document.createElement("div");
-      container.style.cssText = `width:${previewW}px;height:${bPH}px;position:relative;overflow:hidden;background:transparent;`;
-      if(img.src && overlay>0){
-        const ov=document.createElement("div");
-        ov.style.cssText=`position:absolute;inset:0;background:rgba(12,17,26,${overlay/100});`;
-        container.appendChild(ov);
-      }
-      const textDiv = document.createElement("div");
-      textDiv.style.cssText = `position:absolute;left:${textX/100*previewW}px;top:${textY/100*bPH}px;`;
-      textDiv.innerHTML = chatHTML;
-      container.appendChild(textDiv);
-      stage.appendChild(container);
-
-      const overlayDataUrl = await domtoimage.toPng(container, {width:previewW, height:bPH});
-      stage.innerHTML = "";
-
+      const SS = RENDER_SCALE;
+      const W = img.w * SS, H = img.h * SS;
       const canvas = document.createElement("canvas");
-      canvas.width = img.w; canvas.height = img.h;
+      canvas.width = W; canvas.height = H;
       const ctx = canvas.getContext("2d");
+
+      // 1. Image
       if(img.el){
-        ctx.drawImage(img.el, 0, 0, img.w, img.h);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(img.el, 0, 0, W, H);
       } else {
-        ctx.fillStyle="#0f1623"; ctx.fillRect(0,0,img.w,img.h);
+        ctx.fillStyle="#0f1623"; ctx.fillRect(0,0,W,H);
       }
-      const overlayImg = new Image();
-      await new Promise(res => { overlayImg.onload = res; overlayImg.src = overlayDataUrl; });
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(overlayImg, 0, 0, img.w, img.h);
+
+      // 2. Effects
+      applyCanvasEffects(canvas, effects);
+
+      // 3. Dark overlay
+      if(img.src && overlay>0){
+        ctx.fillStyle = `rgba(12,17,26,${overlay/100})`;
+        ctx.fillRect(0,0,W,H);
+      }
+
+      // 4. Chat text at 2× scale
+      const exportMaxW = Math.round((maxWpct/100) * W);
+      const tX = (textX/100) * W;
+      const tY = (textY/100) * H;
+      drawChatOnCanvas(ctx, lines, tX, tY, fontSize*SS, bgEnabled, bgColor, bgOpacity, exportMaxW, SS);
 
       const blob = await new Promise(res => canvas.toBlob(res, "image/png"));
       zip.file(img.name.replace(/\.[^/.]+$/,"")+"_chatlog.png", blob);
@@ -398,8 +490,46 @@ function App(){
     setExporting(false); setExportPct(0);
   };
 
-  // Build preview chat HTML
-  const chatPreviewHTML=buildChatHTML(lines,previewFontSize,bgEnabled,bgColor,bgOpacity,previewMaxW);
+  // ── Pixel-perfect preview: render to a canvas using the EXACT same draw
+  // routine the export uses, at 2× the image's native resolution. The canvas
+  // is CSS-scaled to fit the wrapper, so the user sees crisp text and the
+  // PNG export is pixel-identical to what the preview shows.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const SS = RENDER_SCALE;
+    const W = activeSize.w * SS, H = activeSize.h * SS;
+    if (canvas.width !== W) canvas.width = W;
+    if (canvas.height !== H) canvas.height = H;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, W, H);
+
+    let imgEl = null;
+    if (tab === "single" && singleEl) imgEl = singleEl;
+    else if (tab === "batch" && batchImgs[batchSel]?.el) imgEl = batchImgs[batchSel].el;
+
+    if (imgEl) {
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(imgEl, 0, 0, W, H);
+    } else {
+      ctx.fillStyle = "#0f1623";
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    applyCanvasEffects(canvas, effects);
+
+    if (activeImg && overlay > 0) {
+      ctx.fillStyle = `rgba(12,17,26,${overlay/100})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    if (input.trim()) {
+      const tX = (textX/100) * W;
+      const tY = (textY/100) * H;
+      drawChatOnCanvas(ctx, lines, tX, tY, fontSize*SS, bgEnabled, bgColor, bgOpacity, exportMaxWpx*SS, SS);
+    }
+  });
 
   return(
     <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column",alignItems:"center"}}>
@@ -490,7 +620,7 @@ function App(){
                   <button className="action-btn" style={{borderColor:"#ffffff25",color:"#fff"}} onClick={insertFala}>💬 FALA</button>
                   <button className="action-btn" style={{borderColor:"#cc99ff44",color:"#cc99ff"}} onClick={insertMe}>★ /ME</button>
                   <button className="action-btn" style={{borderColor:"#cc99ff22",color:"#9966cc"}} onClick={insertDo}>◈ /DO</button>
-                  <button className="action-btn" style={{borderColor:"#6ecfa844",color:"#6ecfa8"}} onClick={()=>insertAt("$ ")}>$ ITEM</button>
+                  <button className="action-btn" style={{borderColor:"#f5c50044",color:"#f5c500"}} onClick={()=>insertAt("$ ")}>$ ITEM</button>
                   <button className="action-btn" style={{borderColor:"#f5c50044",color:"#f5c500"}} onClick={()=>insertAt("# ")}># CEL</button>
                   <button className="action-btn" style={{borderColor:"#f8717144",color:"#f87171"}} onClick={()=>insertAt("! ")}>! SIS</button>
                   <button className="action-btn" style={{borderColor:"#94a3b844",color:"#94a3b8"}} onClick={()=>insertAt("(( ")}>(( OOC</button>
@@ -530,6 +660,38 @@ function App(){
                     <div style={{flex:1}}><Slider label="OPACIDADE" value={bgOpacity} min={5} max={100} onChange={setBgOpacity} unit="%"/></div>
                   </div>}
                 </div>
+              </div>
+            </Block>
+
+            {/* Effects */}
+            <Block label="EFEITOS">
+              <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                {[
+                  {key:"grain",     label:"GRANULADO", color:"#a9e34b"},
+                  {key:"vignette",  label:"VIGNETTE",  color:"#7dd3fc"},
+                  {key:"lightleak", label:"LIGHT",     color:"#ffa94d"},
+                  {key:"brush",     label:"BRUSH",     color:"#f783ac"},
+                  {key:"vintage",   label:"VINTAGE",   color:"#f5c500"},
+                  {key:"bw",        label:"P&B",       color:"#cccccc"},
+                ].map(({key,label,color})=>{
+                  const active=effects[key];
+                  return(
+                    <button key={key} onClick={()=>toggleEffect(key)}
+                      style={{
+                        padding:"6px 11px",borderRadius:5,
+                        border:`1px solid ${active?color:"#ffffff14"}`,
+                        background:active?color+"22":"#0a0f17",
+                        color:active?color:"#94a3b8",
+                        fontSize:10,fontWeight:700,cursor:"pointer",
+                        letterSpacing:1,transition:"all .15s",
+                      }}>
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{fontSize:9,color:"#2a3a50",marginTop:8,letterSpacing:1}}>
+                Múltiplos efeitos podem ser combinados.
               </div>
             </Block>
 
@@ -576,39 +738,20 @@ function App(){
               <span style={{fontSize:9,color:C.muted}}>{activeSize.w}×{activeSize.h}px</span>
             </div>
 
-            <div ref={wrapRef} style={{width:"100%",borderRadius:10,overflow:"hidden",border:`1px solid ${C.yellow}15`,boxShadow:"0 8px 36px #00000055",background:C.navy}}>
-              <div
-                ref={previewRef}
+            <div ref={wrapRef} style={{position:"relative",width:"100%",borderRadius:10,overflow:"hidden",border:`1px solid ${C.yellow}15`,boxShadow:"0 8px 36px #00000055",background:C.navy}}>
+              <canvas
+                ref={canvasRef}
                 onMouseDown={onMouseDown}
                 style={{
-                  position:"relative",
+                  display:"block",
                   width:"100%",
-                  paddingTop:`${(activeSize.h/activeSize.w)*100}%`,
+                  height:"auto",
                   cursor:dragging?"grabbing":"grab",
-                  overflow:"hidden",
-                }}>
-                {/* BG image */}
-                {activeImg&&<div style={{position:"absolute",inset:0,backgroundImage:`url(${activeImg})`,backgroundSize:"100% 100%",zIndex:0}}/>}
-                {activeImg&&overlay>0&&<div style={{position:"absolute",inset:0,background:`rgba(12,17,26,${overlay/100})`,zIndex:1}}/>}
-                {!activeImg&&<div style={{position:"absolute",inset:0,background:C.navy,zIndex:0}}/>}
-
-                {/* Chat text — HTML rendered, positioned by % */}
-                <div
-                  style={{
-                    position:"absolute",
-                    left:`${textX}%`,
-                    top:`${textY}%`,
-                    zIndex:2,
-                    maxWidth:`${maxWpct}%`,
-                    pointerEvents:"none",
-                  }}
-                  dangerouslySetInnerHTML={{__html:chatPreviewHTML}}
-                />
-
-                {!input.trim()&&<div style={{position:"absolute",inset:0,zIndex:3,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  <span style={{color:"#1e2a3a",fontSize:12}}>Preview aparecerá aqui...</span>
-                </div>}
-              </div>
+                }}
+              />
+              {!input.trim()&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+                <span style={{color:"#1e2a3a",fontSize:12}}>Preview aparecerá aqui...</span>
+              </div>}
             </div>
           </div>
         </div>
